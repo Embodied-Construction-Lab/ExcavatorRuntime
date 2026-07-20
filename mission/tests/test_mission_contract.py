@@ -43,11 +43,41 @@ def valid_mission_payload() -> dict:
 
 
 class MissionContractTest(unittest.TestCase):
+    def test_accepts_zero_waypoint_dwell_for_immediate_progression(self):
+        payload = valid_mission_payload()
+        payload["targets"]["dig"]["radius_m"] = 0.25
+        payload["limits"]["waypoint_tolerance_m"] = 0.25
+        payload["limits"]["waypoint_dwell_s"] = 0.0
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mission.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            mission = load_mission(path)
+
+        self.assertEqual(mission.limits.waypoint_tolerance_m, 0.25)
+        self.assertEqual(mission.limits.waypoint_dwell_s, 0.0)
+
+    def test_rejects_waypoint_tolerance_larger_than_a_target_radius(self):
+        payload = valid_mission_payload()
+        payload["limits"]["waypoint_tolerance_m"] = 0.25
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mission.json"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            with self.assertRaisesRegex(MissionContractError, "目标半径"):
+                load_mission(path)
+
     def test_active_mission_is_a_valid_right_handed_snapshot(self):
         mission = load_mission(DEFAULT_MISSION)
 
         self.assertEqual(mission.frame_id, "machine_root_ros")
         self.assertIn(mission.target_status, {"placeholder", "rviz_adjusted", "field_validated"})
+        self.assertEqual(mission.limits.waypoint_tolerance_m, 0.25)
+        self.assertEqual(mission.limits.waypoint_dwell_s, 0.0)
+        self.assertGreaterEqual(
+            min(target.radius_m for target in mission.targets.values()),
+            mission.limits.waypoint_tolerance_m,
+        )
 
     def test_loads_file_as_immutable_right_handed_mission_snapshot(self):
         payload = valid_mission_payload()

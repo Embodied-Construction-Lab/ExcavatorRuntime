@@ -112,10 +112,12 @@ class FollowTrajectorySnapshot:
             raise ValueError("waypoints must not be empty")
         for point in self.waypoints:
             _triplet("waypoint", point)
-        for name in ("waypoint_tolerance_m", "waypoint_dwell_s", "tracking_timeout_s"):
+        for name in ("waypoint_tolerance_m", "tracking_timeout_s"):
             value = _finite(name, getattr(self, name))
             if value <= 0.0:
                 raise ValueError(f"{name} must be positive")
+        if _finite("waypoint_dwell_s", self.waypoint_dwell_s) < 0.0:
+            raise ValueError("waypoint_dwell_s must be nonnegative")
 
     def validate_for_shadow(self, *, expected_input_source: str, now_s: float) -> None:
         current = _finite("now_s", now_s)

@@ -41,7 +41,7 @@
       ],
       "properties": {
         "waypoint_tolerance_m": {"type": "number", "exclusiveMinimum": 0.0},
-        "waypoint_dwell_s": {"type": "number", "exclusiveMinimum": 0.0},
+        "waypoint_dwell_s": {"type": "number", "minimum": 0.0},
         "tracking_timeout_s": {"type": "number", "exclusiveMinimum": 0.0},
         "settle_s": {"type": "number", "exclusiveMinimum": 0.0}
       }

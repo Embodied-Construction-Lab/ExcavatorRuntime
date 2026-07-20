@@ -5,6 +5,7 @@ from runtime_bridge.observation import (
     BucketTipObservation,
     ObservationBuilder,
     normalize_position,
+    normalize_velocity,
     position_observation_range,
 )
 from runtime_bridge.protocol import MachineStatePacket, decode_packet, encode_packet
@@ -208,8 +209,16 @@ class ObservationBuilderTest(unittest.TestCase):
 
         self.assertEqual(action, [0.04, -0.05, 0.015, -0.3])
 
-    def test_normalize_position_respects_profile_sign(self):
-        self.assertEqual(normalize_position(1.0, {"range": [0.0, 2.0], "sign": -1}), -0.0)
+    def test_pc_joint_observation_matches_unity_profile_sign(self):
+        actuator = {
+            "range": [0.0, 2.0],
+            "sign": -1,
+            "max_speed_positive": 2.0,
+            "max_speed_negative": 4.0,
+        }
+
+        self.assertEqual(normalize_position(0.5, actuator), 0.5)
+        self.assertEqual(normalize_velocity(1.0, actuator), -0.25)
 
     def test_deploy_absolute_encoder_range_overrides_unity_prismatic_range(self):
         actuator = {
@@ -232,6 +241,20 @@ class ObservationBuilderTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "deploy_position_observation"):
+            position_observation_range(actuator)
+
+    def test_rejects_pc_encoder_direction_metadata(self):
+        actuator = {
+            "range": [-0.1, 0.1],
+            "deploy_position_observation": {
+                "source": "stm32_absolute_cable_encoder",
+                "range": [0.06, 0.16],
+                "status": "firmware_safety_bounds",
+                "command_to_encoder_velocity_sign": -1,
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "deploy_position_observation contract"):
             position_observation_range(actuator)
 
 

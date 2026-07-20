@@ -101,10 +101,10 @@ ros2 launch airy_excavator_bringup operator.launch.py \
 commissioning Follow，但 production 仍只接受 `field_validated`。commissioning 下允许直接运行 candidate
 ExecuteDig/ExecuteDump，用于从任意新鲜真机状态逐段调整固定动作参数；它不要求 Bucket Tip 已在
 目标球内，也不检查尚未标定的固定动作起始包络。Full Mission 仍保持锁定，production 下仍要求
-目标和固定动作均为 `field_validated`。live motion profile 的 Panel → Tests 中提供 boom/stick/bucket 三轴 `Cable − / Cable +`
+目标和固定动作均为 `field_validated`。live motion profile 的 Panel → Tests 中提供 boom/stick/bucket 三轴 `Action − / Action +`
 Hold-to-Jog：按住才发送单轴命令，松开或 RViz 失焦立即取消；Panel 心跳丢失、Machine State 过期、
-安全状态关闭、到达绝对编码器端点余量或达到最长按住时间时，唯一 Command Sink 自动发送终态零命令。
-速度比例、周期、心跳、最长按住时间和端点余量只从 `runtime_bridge/config/runtime.json` 的
+安全状态关闭或达到最长按住时间时，唯一 Command Sink 自动发送终态零命令。
+速度比例、周期、心跳和最长按住时间只从 `runtime_bridge/config/runtime.json` 的
 `manual_jog` section 读取。当前 live 配置把单次硬上限固定为 `1000 ms`；Panel 会直接
 显示服务端的精确拒绝原因，并在 Result 中保留拉线长度 `before / after / delta`。Swing 因现场
 速度/限位尚未验证，不在该诊断入口开放。
@@ -433,7 +433,7 @@ source ros2_ws/install/setup.zsh
 
 它会接收 Orin `machine_state_v1`，发布 `/joint_states` 给 FK，读取 `/bucket_tip_observation`，组装 38 维 observation 并运行 ONNX。该脚本是只读诊断入口，已经移除 `--enable-motion` 和 UDP sender，只记录/打印未发送的候选动作。真机动作只能通过统一 RViz Operator 的 Action Server 和唯一 Command Sink 发送。
 ONNX 输出在 PC 内部按训练语义视为 `[-1, 1]` 策略动作，候选动作会按 `shared/machine_profile.json` 反归一化为物理速度。其中 `boom/stick/bucket` 单位 m/s，`swing` 单位 rad/s。
-反归一化只选择动作正负方向对应的速度幅值，不改变四轴符号；`deploy_sign` 不参与 PC 策略动作换算。
+反归一化只选择动作正负方向对应的速度幅值，不改变四轴符号；低层方向适配由 STM32 负责。
 默认安全判定仍会计算：如果 `estop=true`、`sensor_valid=false`、`stm32_alive=false`、`control_enabled=false` 或存在 `fault_flags`，记录的候选动作会变为零，但任何情况下都不会由该诊断脚本发送。
 
 每个真正成功发往 Orin 的 UDP 动作都会异步追加到本地会话日志：
@@ -469,8 +469,7 @@ profile 为 `field_validated`。当前 candidate 以 Unity ExcavationCycleTask �
 Dump 仍为 bucket `+1.4/-1.4`；
 相对目标像 Unity 一样截断到归一化关节范围，单段达到 tolerance 或 timeout 后进入下一段。
 Dig/Dump 伺服产生的四轴归一化速度与 ONNX 动作使用同一反归一化路径：PC 只按动作正负选择
-对应物理速度幅值，不应用 `deploy_sign` 或 `command_to_encoder_velocity_sign`，低层方向适配由
-STM32 负责。
+对应物理速度幅值并保持 Unity 符号；PC 不保存执行器方向取反属性，低层方向适配由 STM32 负责。
 
 每次只执行一个 ExecuteDig 或 ExecuteDump，等待动作结束和至少 1 秒日志落盘后，可把实际
 PC→Orin Action Journal 的最近一次运动会话导出为 Orin/STM32 回放 CSV：

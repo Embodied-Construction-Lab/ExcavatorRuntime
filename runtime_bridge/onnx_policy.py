@@ -39,7 +39,7 @@ class OnnxPolicy:
         self.action_output = self._find_action_output()
 
     def run(self, observation: Sequence[float]) -> list[float]:
-        """执行一次推理，返回 [boom, stick, bucket, swing]，范围 clamp 到 [-1,1]。"""
+        """执行一次推理，原样返回有限的 [boom, stick, bucket, swing]。"""
         obs = np.asarray(list(observation), dtype=np.float32)
         if obs.shape != (38,):
             raise ValueError(f"ONNX observation 必须是38维，实际为 {obs.shape}")
@@ -119,7 +119,7 @@ class OnnxPolicy:
 
     @staticmethod
     def _extract_action(outputs: Sequence[Any]) -> list[float]:
-        """从 ONNX outputs 中找到4维连续动作并裁剪。"""
+        """从 ONNX outputs 中找到4维有限连续动作，不做数值变换。"""
         arrays = [np.asarray(output) for output in outputs]
         candidates = [array for array in arrays if array.size == 4]
         if not candidates:
@@ -130,5 +130,4 @@ class OnnxPolicy:
         action = candidates[0].astype(np.float32).reshape(-1)[:4]
         if not np.all(np.isfinite(action)):
             raise OnnxPolicyLoadError("ONNX动作输出包含非有限值")
-        action = np.clip(action, -1.0, 1.0)
         return [float(value) for value in action]

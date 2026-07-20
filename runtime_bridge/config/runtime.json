@@ -21,7 +21,7 @@
     "machine_state_timeout_ms": 500
   },
   "fixed_action": {
-    "expected_profile_sha256": "de4166f0b6855a5ead1f6a4eb9ec7ebc7b140c6335d3942cc487adf607126eda"
+    "expected_profile_sha256": "bf9c4b4ab1fe055a601f19235a547364e744fb286ac5bb399ee44697b2f36407"
   },
   "manual_jog": {
     "enabled": true,
@@ -29,8 +29,7 @@
     "speed_fraction": 0.2,
     "command_period_ms": 50,
     "heartbeat_timeout_ms": 175,
-    "max_hold_ms": 1000,
-    "position_margin_m": 0.002
+    "max_hold_ms": 1000
   },
   "follow_control": {
     "mode": "supervised_canary",

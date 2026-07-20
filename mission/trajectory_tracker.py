@@ -35,11 +35,12 @@ class TrajectoryTracker:
             raise ValueError("waypoint必须是3个有限数值")
         for name, value in (
             ("tolerance_m", self.tolerance_m),
-            ("dwell_s", self.dwell_s),
             ("timeout_s", self.timeout_s),
         ):
             if not math.isfinite(value) or value <= 0.0:
                 raise ValueError(f"{name}必须大于0")
+        if not math.isfinite(self.dwell_s) or self.dwell_s < 0.0:
+            raise ValueError("dwell_s必须大于等于0")
 
     def advance(
         self,

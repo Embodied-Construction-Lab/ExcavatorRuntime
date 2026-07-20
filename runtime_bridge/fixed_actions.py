@@ -16,7 +16,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Sequence
 
-from runtime_bridge.observation import normalize_position
+from runtime_bridge.observation import normalize_position, normalized_command_deadzones
 from runtime_bridge.protocol import ACTION_ORDER, MachineStatePacket, PolicyActionPacket, make_zero_action, now_ms
 
 
@@ -490,6 +490,13 @@ def physical_velocity_action_from_normalized(action: Sequence[float], machine_pr
     for name, value in zip(ACTION_ORDER, action, strict=True):
         normalized = clamp(float(value), -1.0, 1.0)
         actuator = actuators[name]
+        positive_deadzone, negative_deadzone = normalized_command_deadzones(
+            actuator, actuator_name=name
+        )
+        deadzone = positive_deadzone if normalized >= 0.0 else negative_deadzone
+        if abs(normalized) <= deadzone:
+            result.append(0.0)
+            continue
         speed_limit = (
             float(actuator["max_speed_positive"])
             if normalized >= 0.0

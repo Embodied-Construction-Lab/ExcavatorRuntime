@@ -556,12 +556,11 @@ class LiveMachineBehaviorNode(Node):
                     direction=request.direction,
                     allowed_actuators=self._config.manual_jog.allowed_actuators,
                     speed_fraction=self._config.manual_jog.speed_fraction,
-                    position_margin_m=self._config.manual_jog.position_margin_m,
                 )
             except ValueError as exc:
                 return self._reject("INVALID_JOG_CONFIGURATION", str(exc))
             if not jog.allowed:
-                return self._reject(jog.reason.upper(), "manual jog endpoint margin is closed")
+                return self._reject(jog.reason.upper(), "manual jog input is invalid")
         return GoalResponse.ACCEPT if self._reserve("HoldToJog", require_mission=False) else GoalResponse.REJECT
 
     def _reserve(self, behavior: str, *, require_mission: bool = True) -> bool:
@@ -737,6 +736,7 @@ class LiveMachineBehaviorNode(Node):
                     episode_progress=min((time.monotonic() - started) / snapshot.tracking_timeout_s, 1.0),
                 )
                 raw_normalized = self._policy.run(observation)
+
                 applied_normalized = self._follow_envelope.apply_normalized(raw_normalized)
                 physical = physical_velocity_action_from_normalized(
                     applied_normalized, self._machine_profile
@@ -852,7 +852,6 @@ class LiveMachineBehaviorNode(Node):
                     direction=goal_handle.request.direction,
                     allowed_actuators=config.allowed_actuators,
                     speed_fraction=config.speed_fraction,
-                    position_margin_m=config.position_margin_m,
                 )
                 final_position = jog.position_m
                 if not math.isfinite(initial_position):
@@ -862,7 +861,7 @@ class LiveMachineBehaviorNode(Node):
                         goal_handle,
                         HoldToJog.Result.OUTCOME_FAILED,
                         jog.reason.upper(),
-                        "manual jog endpoint margin reached",
+                        "manual jog input became invalid",
                         initial_position,
                         final_position,
                         start_datagrams,

@@ -5,12 +5,12 @@
   "action_order": ["boom", "stick", "bucket", "swing"],
   "validation_status": "candidate",
   "validation_evidence": null,
-  "machine_profile_sha256": "086ec5449350de39b3560a98b1ec03a8facde0e933949ab88630d9b0ed055012",
+  "machine_profile_sha256": "a24ba6f15420905dffe080eaf0c506f755fd040c6587668b14b522b8de575ced",
   "urdf_sha256": "dcf5b64a538a739f3f6ae2b390e7e0bcd6de5cc5924edaefe446c5586632f6db",
   "controller": {
     "kp": 1.5,
-    "min_action": 0.08,
-    "max_action": 1.0,
+    "min_action": 0.6,
+    "max_action": 0.6,
     "tolerance": 0.03,
     "step_timeout_s": 3.0,
     "hold_s": 0.15
@@ -41,7 +41,7 @@
         "step_id": "dig_probe",
         "label": "probe",
         "delta_by_actuator": {
-          "boom": 0.25,
+          "boom": 0.5,
           "stick": 0.0,
           "bucket": 0.0,
           "swing": 0.0
@@ -61,8 +61,8 @@
         "step_id": "dig_lift_bucket",
         "label": "lift_bucket",
         "delta_by_actuator": {
-          "boom": -0.25,
-          "stick": 0.1,
+          "boom": -0.5,
+          "stick": 0.2,
           "bucket": 0.0,
           "swing": 0.0
         }

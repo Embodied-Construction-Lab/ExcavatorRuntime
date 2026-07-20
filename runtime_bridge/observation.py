@@ -26,7 +26,34 @@ class BucketTipObservation:
 
 def load_machine_profile(path: Path) -> dict[str, Any]:
     """读取唯一机型常数来源 machine_profile.json。"""
-    return json.loads(path.read_text(encoding="utf-8"))
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    actuators = profile.get("actuators")
+    if isinstance(actuators, Mapping):
+        for name, actuator in actuators.items():
+            if isinstance(actuator, Mapping):
+                normalized_command_deadzones(actuator, actuator_name=str(name))
+    return profile
+
+
+def normalized_command_deadzones(
+    actuator: Mapping[str, Any], *, actuator_name: str = "actuator"
+) -> tuple[float, float]:
+    """读取正负归一化策略命令死区；未配置时保持零死区以支持现场标定。"""
+    values: list[float] = []
+    for direction in ("positive", "negative"):
+        field_name = f"command_deadzone_{direction}_normalized"
+        value = actuator.get(field_name, 0.0)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0.0 <= float(value) < 1.0
+        ):
+            raise ValueError(
+                f"{actuator_name}.{field_name} must be finite and in [0, 1)"
+            )
+        values.append(float(value))
+    return values[0], values[1]
 
 
 def load_waypoint_slice_values(path: Path) -> list[float]:
@@ -52,16 +79,12 @@ def position_observation_range(actuator: Mapping[str, Any]) -> tuple[float, floa
     configured_range = actuator.get("range")
     if deploy is not None:
         required_fields = {"source", "range", "status"}
-        optional_fields = {"command_to_encoder_velocity_sign"}
         if (
             not isinstance(deploy, Mapping)
             or not required_fields.issubset(deploy)
-            or set(deploy) - required_fields - optional_fields
+            or set(deploy) - required_fields
         ):
             raise ValueError("deploy_position_observation contract is invalid")
-        command_sign = deploy.get("command_to_encoder_velocity_sign")
-        if command_sign is not None and command_sign not in {-1, 1}:
-            raise ValueError("deploy_position_observation command sign is invalid")
         if deploy.get("source") != "stm32_absolute_cable_encoder":
             raise ValueError("deploy_position_observation source is invalid")
         if deploy.get("status") not in {"firmware_safety_bounds", "field_calibrated"}:

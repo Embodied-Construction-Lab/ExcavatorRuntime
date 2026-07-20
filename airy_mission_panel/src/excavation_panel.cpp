@@ -201,14 +201,14 @@ ExcavationPanel::ExcavationPanel(QWidget * parent)
   const std::array<std::string, 3> jog_actuators{{"boom", "stick", "bucket"}};
   for (std::size_t index = 0; index < jog_actuators.size(); ++index) {
     const auto & actuator = jog_actuators[index];
-    auto * negative = new QPushButton("Cable −", manual_jog_box);
-    auto * positive = new QPushButton("Cable +", manual_jog_box);
+    auto * negative = new QPushButton("Action −", manual_jog_box);
+    auto * positive = new QPushButton("Action +", manual_jog_box);
     negative->setObjectName(QString("manual_jog_%1_negative").arg(
         QString::fromStdString(actuator)));
     positive->setObjectName(QString("manual_jog_%1_positive").arg(
         QString::fromStdString(actuator)));
-    negative->setToolTip("Hold to decrease the STM32 absolute cable length; release stops");
-    positive->setToolTip("Hold to increase the STM32 absolute cable length; release stops");
+    negative->setToolTip("Hold to send a negative action; release stops");
+    positive->setToolTip("Hold to send a positive action; release stops");
     manual_jog_buttons_[index * 2] = negative;
     manual_jog_buttons_[index * 2 + 1] = positive;
     manual_jog_layout->addWidget(
@@ -390,7 +390,7 @@ void ExcavationPanel::startManualJog(
     jog_heartbeat_active_ = true;
     cancel_requested_ = false;
     operation_text_ = "Holding manual jog: " + actuator +
-      (direction > 0 ? " cable +" : " cable -");
+      (direction > 0 ? " action +" : " action -");
     feedback_text_ = "Waiting for HoldToJog goal response";
     result_text_ = "Release the button to stop";
   }

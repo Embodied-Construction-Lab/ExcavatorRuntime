@@ -22,28 +22,24 @@ def sample_profile():
             "boom": {
                 "range": [-0.1, 0.1],
                 "sign": 1,
-                "deploy_sign": 1,
                 "max_speed_positive": 0.04,
                 "max_speed_negative": 0.02,
             },
             "stick": {
                 "range": [-0.2, 0.2],
                 "sign": 1,
-                "deploy_sign": 1,
                 "max_speed_positive": 0.05,
                 "max_speed_negative": 0.05,
             },
             "bucket": {
                 "range": [-0.3, 0.1],
                 "sign": 1,
-                "deploy_sign": 1,
                 "max_speed_positive": 0.03,
                 "max_speed_negative": 0.06,
             },
             "swing": {
                 "range": [None, None],
                 "sign": 1,
-                "deploy_sign": 1,
                 "max_speed_positive": 0.6,
                 "max_speed_negative": 0.6,
                 "calibrated": False,
@@ -168,20 +164,27 @@ def load_sample_fixed_action_profile(mutator=None):
 
 
 class FixedActionTest(unittest.TestCase):
-    def test_deployed_candidate_sequences_use_reduced_dig_arm_travel(self):
+    def test_deployed_candidate_uses_unity_deltas_and_requested_constant_sixty_percent_speed(self):
+        project_root = Path(__file__).resolve().parents[2]
         payload = json.loads(
-            (Path(__file__).resolve().parents[1] / "config/fixed_actions.json").read_text(
+            (project_root / "runtime_bridge/config/fixed_actions.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        machine_profile = json.loads(
+            (project_root.parent / "shared/machine_profile.json").read_text(
                 encoding="utf-8"
             )
         )
 
-        self.assertEqual(payload["controller"]["max_action"], 1.0)
+        self.assertEqual(payload["controller"]["min_action"], 0.6)
+        self.assertEqual(payload["controller"]["max_action"], 0.6)
         self.assertEqual(
             [step["delta_by_actuator"] for step in payload["actions"]["dig"]],
             [
-                {"boom": 0.25, "stick": 0.0, "bucket": 0.0, "swing": 0.0},
+                {"boom": 0.5, "stick": 0.0, "bucket": 0.0, "swing": 0.0},
                 {"boom": 0.0, "stick": 0.0, "bucket": -1.4, "swing": 0.0},
-                {"boom": -0.25, "stick": 0.1, "bucket": 0.0, "swing": 0.0},
+                {"boom": -0.5, "stick": 0.2, "bucket": 0.0, "swing": 0.0},
             ],
         )
         self.assertEqual(
@@ -190,6 +193,42 @@ class FixedActionTest(unittest.TestCase):
                 {"boom": 0.0, "stick": 0.0, "bucket": 1.4, "swing": 0.0},
                 {"boom": 0.0, "stick": 0.0, "bucket": -1.4, "swing": 0.0},
             ],
+        )
+        self.assertEqual(
+            physical_velocity_action_from_normalized(
+                [0.0, 0.0, 0.6, 0.0], machine_profile
+            ),
+            [0.0, 0.0, 0.02052, 0.0],
+        )
+        self.assertEqual(
+            physical_velocity_action_from_normalized(
+                [0.0, 0.0, -0.6, 0.0], machine_profile
+            ),
+            [0.0, 0.0, -0.02514, 0.0],
+        )
+
+    def test_shipped_measured_directional_deadzones_zero_each_axis_at_breakaway_threshold(self):
+        machine_profile = json.loads(
+            (Path(__file__).resolve().parents[2].parent / "shared/machine_profile.json")
+            .read_text(encoding="utf-8")
+        )
+        actuators = machine_profile["actuators"]
+        positive_thresholds = [
+            actuators[name]["command_deadzone_positive_normalized"]
+            for name in ("boom", "stick", "bucket", "swing")
+        ]
+        negative_thresholds = [
+            -actuators[name]["command_deadzone_negative_normalized"]
+            for name in ("boom", "stick", "bucket", "swing")
+        ]
+
+        self.assertEqual(
+            physical_velocity_action_from_normalized(positive_thresholds, machine_profile),
+            [0.0, 0.0, 0.0, 0.0],
+        )
+        self.assertEqual(
+            physical_velocity_action_from_normalized(negative_thresholds, machine_profile),
+            [0.0, 0.0, 0.0, 0.0],
         )
 
     def test_loads_versioned_fixed_action_profile_bound_to_machine_and_urdf(self):
@@ -364,14 +403,42 @@ class FixedActionTest(unittest.TestCase):
 
         self.assertEqual(action, [0.04, -0.05, 0.015, -0.3])
 
-    def test_policy_direction_is_independent_from_encoder_direction_metadata(self):
+    def test_directional_command_deadzones_zero_small_swing_but_keep_larger_swing_proportional(self):
         profile = sample_profile()
-        profile["actuators"]["boom"]["deploy_position_observation"] = {
-            "source": "stm32_absolute_cable_encoder",
-            "range": [0.14, 0.19],
-            "status": "firmware_safety_bounds",
-            "command_to_encoder_velocity_sign": -1,
-        }
+        profile["actuators"]["swing"]["command_deadzone_positive_normalized"] = 0.2
+        profile["actuators"]["swing"]["command_deadzone_negative_normalized"] = 0.3
+
+        action = physical_velocity_action_from_normalized(
+            [0.0, 0.0, 0.0, -0.5], profile
+        )
+
+        self.assertEqual(action, [0.0, 0.0, 0.0, -0.3])
+        self.assertEqual(
+            physical_velocity_action_from_normalized([0.0, 0.0, 0.0, 0.2], profile),
+            [0.0, 0.0, 0.0, 0.0],
+        )
+        self.assertEqual(
+            physical_velocity_action_from_normalized([0.0, 0.0, 0.0, -0.25], profile),
+            [0.0, 0.0, 0.0, 0.0],
+        )
+
+    def test_command_deadzone_rejects_invalid_profile_value(self):
+        profile = sample_profile()
+        profile["actuators"]["swing"]["command_deadzone_positive_normalized"] = 1.0
+
+        with self.assertRaisesRegex(ValueError, "swing.command_deadzone_positive_normalized"):
+            physical_velocity_action_from_normalized([0.0, 0.0, 0.0, 0.5], profile)
+
+    def test_policy_to_physical_velocity_matches_unity_single_entry_clamp(self):
+        action = physical_velocity_action_from_normalized(
+            [1.25, -1.5, 0.5, -0.5], sample_profile()
+        )
+
+        self.assertEqual(action, [0.04, -0.05, 0.015, -0.3])
+
+    def test_policy_direction_is_independent_from_profile_observation_sign(self):
+        profile = sample_profile()
+        profile["actuators"]["boom"]["sign"] = -1
 
         action = physical_velocity_action_from_normalized(
             [1.0, 0.0, 0.0, 0.0], profile
@@ -394,6 +461,16 @@ class FixedActionTest(unittest.TestCase):
         self.assertGreater(action[2], 0.0)
         self.assertLess(action[3], 0.0)
 
+    def test_shipped_machine_profile_has_no_pc_encoder_direction_metadata(self):
+        profile = json.loads(
+            (Path(__file__).resolve().parents[2].parent / "shared/machine_profile.json")
+            .read_text(encoding="utf-8")
+        )
+
+        for actuator in ("boom", "stick", "bucket"):
+            deploy = profile["actuators"][actuator]["deploy_position_observation"]
+            self.assertNotIn("command_to_encoder_velocity_sign", deploy)
+
     def test_dig_first_step_generates_orin_compatible_physical_velocity_packet(self):
         temporary, profile = load_sample_fixed_action_profile()
         self.addCleanup(temporary.cleanup)
@@ -408,6 +485,31 @@ class FixedActionTest(unittest.TestCase):
         self.assertAlmostEqual(decoded.action[0], 0.03)
         self.assertEqual(decoded.action[1:], [0.0, 0.0, 0.0])
 
+    def test_equal_min_and_max_action_keeps_speed_constant_until_tolerance(self):
+        temporary, profile = load_sample_fixed_action_profile()
+        self.addCleanup(temporary.cleanup)
+        executor = FixedActionExecutor(
+            profile.sequence("dig"),
+            sample_profile(),
+            min_action=0.6,
+            max_action=0.6,
+            tolerance=0.03,
+        )
+
+        far_packet, _ = executor.step(
+            sample_state(boom=0.0), now_s=0.0, seq=1, valid_for_ms=100
+        )
+        near_packet, _ = executor.step(
+            sample_state(boom=0.04), now_s=0.1, seq=2, valid_for_ms=100
+        )
+        reached_packet, _ = executor.step(
+            sample_state(boom=0.048), now_s=0.2, seq=3, valid_for_ms=100
+        )
+
+        self.assertEqual(far_packet.action[0], 0.024)
+        self.assertEqual(near_packet.action[0], 0.024)
+        self.assertEqual(reached_packet.action, [0.0, 0.0, 0.0, 0.0])
+
     def test_fixed_action_preserves_servo_error_direction_like_onnx_action(self):
         temporary, profile = load_sample_fixed_action_profile()
         self.addCleanup(temporary.cleanup)
@@ -416,7 +518,6 @@ class FixedActionTest(unittest.TestCase):
             "source": "stm32_absolute_cable_encoder",
             "range": [-0.1, 0.1],
             "status": "firmware_safety_bounds",
-            "command_to_encoder_velocity_sign": -1,
         }
         executor = FixedActionExecutor(profile.sequence("dig"), machine_profile)
 

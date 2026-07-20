@@ -82,6 +82,7 @@ def build_execution_snapshot_fields(
     source_local_map_stamp_s: float,
     inputs_frozen_at_s: float,
     created_at_s: float,
+    waypoint_tolerance_m: float,
     waypoint_dwell_s: float,
     tracking_timeout_s: float,
     control_stage: str,
@@ -166,7 +167,7 @@ def build_execution_snapshot_fields(
         "map_source": "live_local_map",
         "clock_mode": "ros_clock",
         "waypoints": converted,
-        "waypoint_tolerance_m": float(trajectory.get("target_threshold", 0.03)),
+        "waypoint_tolerance_m": float(waypoint_tolerance_m),
         "waypoint_dwell_s": float(waypoint_dwell_s),
         "tracking_timeout_s": float(tracking_timeout_s),
     }

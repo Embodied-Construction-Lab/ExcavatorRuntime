@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -44,7 +45,6 @@ def valid_config_payload():
             "command_period_ms": 50,
             "heartbeat_timeout_ms": 175,
             "max_hold_ms": 3000,
-            "position_margin_m": 0.002,
         },
         "follow_control": {
             "mode": "supervised_canary",
@@ -56,6 +56,19 @@ def valid_config_payload():
 
 
 class RuntimeConfigTest(unittest.TestCase):
+    def test_shipped_fixed_action_digest_matches_fixed_action_template(self):
+        runtime_root = Path(__file__).resolve().parents[1]
+        for config_name in ("runtime.json", "runtime.mock.json"):
+            with self.subTest(config_name=config_name):
+                config_path = runtime_root / "config" / config_name
+                config = load_runtime_config(config_path, project_root=runtime_root.parent)
+
+                actual_digest = hashlib.sha256(
+                    config.artifacts.fixed_action_profile.read_bytes()
+                ).hexdigest()
+
+                self.assertEqual(config.fixed_action.expected_profile_sha256, actual_digest)
+
     def test_live_manual_jog_is_hard_limited_to_one_second_field_probe(self):
         live_config = load_runtime_config(
             Path(__file__).resolve().parents[1] / "config/runtime.json"

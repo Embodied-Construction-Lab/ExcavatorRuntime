@@ -87,22 +87,18 @@ class LiveControlTests(unittest.TestCase):
                 "boom": {
                     "max_speed_positive": 0.04,
                     "max_speed_negative": 0.02,
-                    "deploy_sign": -1,
                 },
                 "stick": {
                     "max_speed_positive": 0.05,
                     "max_speed_negative": 0.03,
-                    "deploy_sign": -1,
                 },
                 "bucket": {
                     "max_speed_positive": 0.06,
                     "max_speed_negative": 0.01,
-                    "deploy_sign": -1,
                 },
                 "swing": {
                     "max_speed_positive": 1.0,
                     "max_speed_negative": 1.0,
-                    "deploy_sign": 1,
                 },
             }
         }
@@ -120,13 +116,12 @@ class LiveControlTests(unittest.TestCase):
             "follow_canary_envelope_violation",
         )
 
-    def test_follow_canary_rejects_non_finite_or_wrong_length_policy_output(self):
+    def test_follow_canary_rejects_malformed_output_but_preserves_finite_values(self):
         profile = {
             "actuators": {
                 name: {
                     "max_speed_positive": 1.0,
                     "max_speed_negative": 1.0,
-                    "deploy_sign": 1,
                 }
                 for name in ("boom", "stick", "bucket", "swing")
             }
@@ -139,8 +134,10 @@ class LiveControlTests(unittest.TestCase):
             envelope.apply_normalized((0.0, 0.0, 0.0))
         with self.assertRaisesRegex(ValueError, "four finite"):
             envelope.apply_normalized((0.0, float("nan"), 0.0, 0.0))
-        with self.assertRaisesRegex(ValueError, r"\[-1, 1\]"):
-            envelope.apply_normalized((1.01, 0.0, 0.0, 0.0))
+        self.assertEqual(
+            envelope.apply_normalized((1.25, -1.5, 0.75, -1.0)),
+            (1.25, -1.5, 0.75, -1.0),
+        )
 
     def test_command_sink_rejects_direct_canary_envelope_bypass_with_zero(self):
         profile = {
@@ -148,7 +145,6 @@ class LiveControlTests(unittest.TestCase):
                 name: {
                     "max_speed_positive": 0.1,
                     "max_speed_negative": 0.1,
-                    "deploy_sign": 1,
                 }
                 for name in ("boom", "stick", "bucket", "swing")
             }
@@ -255,7 +251,7 @@ class LiveControlTests(unittest.TestCase):
 
         self.assertTrue(evaluate_actuator_state(state, profile).allowed)
 
-    def test_field_observed_boom_position_allows_both_directions_inside_margin(self):
+    def test_field_observed_boom_position_preserves_both_action_directions(self):
         profile_path = Path(__file__).resolve().parents[2] / "../shared/machine_profile.json"
         profile = json.loads(profile_path.read_text(encoding="utf-8"))
         state = sample_state()
@@ -266,29 +262,27 @@ class LiveControlTests(unittest.TestCase):
 
         self.assertTrue(evaluate_actuator_state(state, profile).allowed)
 
-        cable_increase = build_manual_jog_action(
+        action_positive = build_manual_jog_action(
             state,
             profile,
             actuator="boom",
             direction=1,
             allowed_actuators=("boom", "stick", "bucket"),
             speed_fraction=0.1,
-            position_margin_m=0.002,
         )
-        cable_decrease = build_manual_jog_action(
+        action_negative = build_manual_jog_action(
             state,
             profile,
             actuator="boom",
             direction=-1,
             allowed_actuators=("boom", "stick", "bucket"),
             speed_fraction=0.1,
-            position_margin_m=0.002,
         )
 
-        self.assertTrue(cable_increase.allowed)
-        self.assertEqual(cable_increase.physical_action, (-0.00185, 0.0, 0.0, 0.0))
-        self.assertTrue(cable_decrease.allowed)
-        self.assertEqual(cable_decrease.physical_action, (0.00351, 0.0, 0.0, 0.0))
+        self.assertTrue(action_positive.allowed)
+        self.assertEqual(action_positive.physical_action, (0.00351, 0.0, 0.0, 0.0))
+        self.assertTrue(action_negative.allowed)
+        self.assertEqual(action_negative.physical_action, (-0.00185, 0.0, 0.0, 0.0))
 
     def test_motion_authorization_requires_exact_deliberate_token(self):
         self.assertTrue(motion_authorization_granted(LIVE_MOTION_AUTHORIZATION))
@@ -420,7 +414,7 @@ class LiveControlTests(unittest.TestCase):
         self.assertEqual(decode_packet(sender.payloads[-2]).action, [0.0] * 4)
         self.assertEqual(decode_packet(sender.payloads[-1]).action, [0.0] * 4)
 
-    def test_manual_jog_is_single_axis_bounded_and_directional_at_encoder_margin(self):
+    def test_manual_jog_preserves_requested_action_direction_without_encoder_sign(self):
         profile = {
             "actuators": {
                 "boom": {
@@ -431,7 +425,6 @@ class LiveControlTests(unittest.TestCase):
                         "source": "stm32_absolute_cable_encoder",
                         "range": [0.14, 0.19],
                         "status": "firmware_safety_bounds",
-                        "command_to_encoder_velocity_sign": -1,
                     },
                 },
                 "stick": {
@@ -442,7 +435,6 @@ class LiveControlTests(unittest.TestCase):
                         "source": "stm32_absolute_cable_encoder",
                         "range": [0.06, 0.22],
                         "status": "firmware_safety_bounds",
-                        "command_to_encoder_velocity_sign": -1,
                     },
                 },
                 "bucket": {
@@ -453,7 +445,6 @@ class LiveControlTests(unittest.TestCase):
                         "source": "stm32_absolute_cable_encoder",
                         "range": [0.06, 0.16],
                         "status": "firmware_safety_bounds",
-                        "command_to_encoder_velocity_sign": -1,
                     },
                 },
                 "swing": {"action_index": 3},
@@ -471,10 +462,9 @@ class LiveControlTests(unittest.TestCase):
             direction=1,
             allowed_actuators=("boom", "stick", "bucket"),
             speed_fraction=0.1,
-            position_margin_m=0.002,
         )
         self.assertTrue(allowed.allowed)
-        self.assertEqual(allowed.physical_action, (-0.002, 0.0, 0.0, 0.0))
+        self.assertEqual(allowed.physical_action, (0.004, 0.0, 0.0, 0.0))
 
         toward_upper = build_manual_jog_action(
             state,
@@ -483,7 +473,6 @@ class LiveControlTests(unittest.TestCase):
             direction=1,
             allowed_actuators=("boom", "stick", "bucket"),
             speed_fraction=0.1,
-            position_margin_m=0.002,
         )
         away_from_upper = build_manual_jog_action(
             state,
@@ -492,12 +481,11 @@ class LiveControlTests(unittest.TestCase):
             direction=-1,
             allowed_actuators=("boom", "stick", "bucket"),
             speed_fraction=0.1,
-            position_margin_m=0.002,
         )
-        self.assertFalse(toward_upper.allowed)
-        self.assertEqual(toward_upper.reason, "bucket_upper_margin")
+        self.assertTrue(toward_upper.allowed)
+        self.assertEqual(toward_upper.physical_action, (0.0, 0.0, 0.003, 0.0))
         self.assertTrue(away_from_upper.allowed)
-        self.assertEqual(away_from_upper.physical_action, (0.0, 0.0, 0.003, 0.0))
+        self.assertEqual(away_from_upper.physical_action, (0.0, 0.0, -0.006, 0.0))
 
     def test_manual_jog_rejects_swing_invalid_direction_and_untrusted_range(self):
         profile = {
@@ -517,19 +505,16 @@ class LiveControlTests(unittest.TestCase):
             build_manual_jog_action(
                 sample_state(), profile, actuator="swing", direction=1,
                 allowed_actuators=("boom", "stick", "bucket"), speed_fraction=0.1,
-                position_margin_m=0.002,
             )
         with self.assertRaisesRegex(ValueError, "direction"):
             build_manual_jog_action(
                 sample_state(), profile, actuator="boom", direction=0,
                 allowed_actuators=("boom", "stick", "bucket"), speed_fraction=0.1,
-                position_margin_m=0.002,
             )
         with self.assertRaisesRegex(ValueError, "firmware_safety_bounds"):
             build_manual_jog_action(
                 sample_state(), profile, actuator="boom", direction=1,
                 allowed_actuators=("boom", "stick", "bucket"), speed_fraction=0.1,
-                position_margin_m=0.002,
             )
 
     def test_dynamic_waypoint_values_follow_current_tip_and_index(self):

@@ -191,6 +191,7 @@ class LivePlanActionNode(Node):
                 source_local_map_stamp_s=float(live.local_map["timestamp_s"]),
                 inputs_frozen_at_s=inputs_frozen_at_s,
                 created_at_s=created_at_s,
+                waypoint_tolerance_m=self._mission.limits.waypoint_tolerance_m,
                 waypoint_dwell_s=self._mission.limits.waypoint_dwell_s,
                 tracking_timeout_s=self._mission.limits.tracking_timeout_s,
                 control_stage=self._control_policy.name,
