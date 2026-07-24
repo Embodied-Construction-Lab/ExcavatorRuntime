@@ -74,6 +74,7 @@ class MissionContractTest(unittest.TestCase):
         self.assertIn(mission.target_status, {"placeholder", "rviz_adjusted", "field_validated"})
         self.assertEqual(mission.limits.waypoint_tolerance_m, 0.25)
         self.assertEqual(mission.limits.waypoint_dwell_s, 0.0)
+        self.assertEqual(mission.limits.tracking_timeout_s, 60.0)
         self.assertGreaterEqual(
             min(target.radius_m for target in mission.targets.values()),
             mission.limits.waypoint_tolerance_m,

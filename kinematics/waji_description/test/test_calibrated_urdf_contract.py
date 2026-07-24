@@ -45,7 +45,7 @@ class CalibratedUrdfContractTest(unittest.TestCase):
             "swing_joint": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
             "boom_joint": ((0.05, 0.0, 0.0), (0.0, 0.52, 0.0)),
             "arm_joint": ((0.78, 0.0, 0.0), (0.0, 2.95, 0.0)),
-            "bucket_joint": ((0.35, 0.0, 0.0), (0.0, 2.74, 0.0)),
+            "bucket_joint": ((0.35, 0.0, 0.0), (0.0, 3.67, 0.0)),
             "bucket_to_tip": ((0.2, 0.0, 0.0), (0.0, 1.1, 0.0)),
         }
 

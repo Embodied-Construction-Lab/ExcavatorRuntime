@@ -9,7 +9,7 @@
     "action_time_source": "pc"
   },
   "artifacts": {
-    "onnx": "../RLExcavator/Assets/AIModels/ExcavatorTrajectory-7496592.onnx",
+    "onnx": "../RLExcavator/Assets/AIModels/ScaleModelDeploy05_cale_v3_deadzone_reward_03_p003.onnx",
     "machine_profile": "../shared/machine_profile.json",
     "fixed_action_profile": "runtime_bridge/config/fixed_actions.json",
     "urdf": "kinematics/waji_description/urdf/waji.urdf",
@@ -21,7 +21,7 @@
     "machine_state_timeout_ms": 500
   },
   "fixed_action": {
-    "expected_profile_sha256": "bf9c4b4ab1fe055a601f19235a547364e744fb286ac5bb399ee44697b2f36407"
+    "expected_profile_sha256": "ff0ffb6360849cf917aeffcba068d33f913a8521ee0eaec8c909aac30e9e2adf"
   },
   "manual_jog": {
     "enabled": true,

@@ -908,7 +908,9 @@ void ExcavationPanel::sendExecute(const std::string & phase)
           finishOperationLocked("ExecuteDig CANCELLED");
         } else {
           failOperationLocked(
-            wrapped.result ? "ExecuteDig failed: " + wrapped.result->reason_code :
+            wrapped.result ?
+            "ExecuteDig failed: " + wrapped.result->reason_code + " / " +
+            wrapped.result->message :
             "ExecuteDig failed without Result");
         }
       };
@@ -966,11 +968,13 @@ void ExcavationPanel::sendExecute(const std::string & phase)
         wrapped.result->quiescence_confirmed)
       {
         finishOperationLocked("ExecuteDump CANCELLED");
-      } else {
-        failOperationLocked(
-          wrapped.result ? "ExecuteDump failed: " + wrapped.result->reason_code :
-          "ExecuteDump failed without Result");
-      }
+    } else {
+      failOperationLocked(
+        wrapped.result ?
+        "ExecuteDump failed: " + wrapped.result->reason_code + " / " +
+        wrapped.result->message :
+        "ExecuteDump failed without Result");
+    }
     };
   execute_dump_client_->async_send_goal(goal, options);
 }

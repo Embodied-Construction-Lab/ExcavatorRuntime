@@ -1,7 +1,7 @@
 {
   "schema_version": "named_joint_poses.v1",
   "machine_id": "scale_excavator",
-  "urdf_sha256": "dcf5b64a538a739f3f6ae2b390e7e0bcd6de5cc5924edaefe446c5586632f6db",
+  "urdf_sha256": "c1dffdac1e460682c4d6c45187e0fbb6e5a8323a189ddbc4fd66e0696919ef62",
   "joint_order": [
     "swing_joint",
     "boom_joint",

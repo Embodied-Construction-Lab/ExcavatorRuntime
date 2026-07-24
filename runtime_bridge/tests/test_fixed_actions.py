@@ -207,6 +207,51 @@ class FixedActionTest(unittest.TestCase):
             [0.0, 0.0, -0.02514, 0.0],
         )
 
+    def test_shipped_step_timeout_covers_slowest_fixed_action_with_response_margin(self):
+        project_root = Path(__file__).resolve().parents[2]
+        payload = json.loads(
+            (project_root / "runtime_bridge/config/fixed_actions.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        machine_profile = json.loads(
+            (project_root.parent / "shared/machine_profile.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        controller = payload["controller"]
+        action_order = payload["action_order"]
+        slowest_ideal_s = 0.0
+
+        for steps in payload["actions"].values():
+            for step in steps:
+                for actuator_name in action_order:
+                    delta = float(step["delta_by_actuator"][actuator_name])
+                    if delta == 0.0 or actuator_name == "swing":
+                        continue
+                    actuator = machine_profile["actuators"][actuator_name]
+                    range_min, range_max = actuator["range"]
+                    travel_m = max(
+                        abs(delta) - float(controller["tolerance"]),
+                        0.0,
+                    ) * (float(range_max) - float(range_min)) / 2.0
+                    speed_key = (
+                        "max_speed_positive" if delta > 0.0 else "max_speed_negative"
+                    )
+                    command_speed_mps = (
+                        float(controller["max_action"]) * float(actuator[speed_key])
+                    )
+                    slowest_ideal_s = max(
+                        slowest_ideal_s,
+                        travel_m / command_speed_mps,
+                    )
+
+        self.assertGreaterEqual(
+            float(controller["step_timeout_s"]),
+            slowest_ideal_s * 1.25,
+            "单步超时必须覆盖最慢固定动作的理论行程，并保留至少 25% 响应余量",
+        )
+
     def test_shipped_measured_directional_deadzones_zero_each_axis_at_breakaway_threshold(self):
         machine_profile = json.loads(
             (Path(__file__).resolve().parents[2].parent / "shared/machine_profile.json")
@@ -439,6 +484,7 @@ class FixedActionTest(unittest.TestCase):
     def test_policy_direction_is_independent_from_profile_observation_sign(self):
         profile = sample_profile()
         profile["actuators"]["boom"]["sign"] = -1
+        profile["actuators"]["boom"]["deploy_observation_sign"] = -1
 
         action = physical_velocity_action_from_normalized(
             [1.0, 0.0, 0.0, 0.0], profile
@@ -539,6 +585,35 @@ class FixedActionTest(unittest.TestCase):
         done_packet, done_status = executor.step(sample_state(bucket=0.1), now_s=0.2, seq=2, valid_for_ms=100)
         self.assertFalse(done_status.done)
         self.assertEqual(done_packet.action, [0.0, 0.0, 0.0, 0.0])
+
+    def test_dump_opens_true_machine_bucket_from_closed_encoder_endpoint(self):
+        temporary, profile = load_sample_fixed_action_profile()
+        self.addCleanup(temporary.cleanup)
+        machine_profile = sample_profile()
+        machine_profile["actuators"]["bucket"]["deploy_position_observation"] = {
+            "source": "stm32_absolute_cable_encoder",
+            "range": [0.06, 0.16],
+            "status": "firmware_safety_bounds",
+        }
+        machine_profile["actuators"]["bucket"]["deploy_observation_sign"] = -1
+        executor = FixedActionExecutor(
+            profile.sequence("dump"),
+            machine_profile,
+            min_action=0.6,
+            max_action=0.6,
+            tolerance=0.03,
+        )
+
+        packet, status = executor.step(
+            sample_state(bucket=0.16005),
+            now_s=0.0,
+            seq=1,
+            valid_for_ms=100,
+        )
+
+        self.assertFalse(status.done)
+        self.assertGreater(packet.action[2], 0.0)
+        self.assertEqual(packet.action[0:2] + packet.action[3:], [0.0, 0.0, 0.0])
 
     def test_step_timeout_fails_closed_without_advancing(self):
         temporary, profile = load_sample_fixed_action_profile()

@@ -10,6 +10,7 @@ Panels:
         - /Status1
         - /Grid1
         - /RobotModel1
+        - /RobotModel1/Status1
         - /Axes1
         - /MarkerArray1
         - /Planning Preview Path1
@@ -115,8 +116,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 2.429973602294922
-        Min Value: -16.328794479370117
+        Max Value: 2.434553623199463
+        Min Value: -16.347291946411133
         Value: true
       Axis: Y
       Channel Name: intensity
@@ -232,16 +233,17 @@ Visualization Manager:
       Show Axes: true
       Show Names: false
       Tree:
+        machine_root_ros:
+          fk_root:
+            base_link:
+              swing_link:
+                boom_link:
+                  arm_link:
+                    bucket_link:
+                      bucket_tip:
+                        {}
         world:
-          machine_root_ros:
-            fk_root:
-              base_link:
-                swing_link:
-                  boom_link:
-                    arm_link:
-                      bucket_link:
-                        bucket_tip:
-                          {}
+          {}
       Update Interval: 0
       Value: true
     - Alpha: 1
@@ -310,7 +312,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 3.885075807571411
+      Distance: 6.113242149353027
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -325,10 +327,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6447973847389221
+      Pitch: 0.7047968506813049
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 4.3404741287231445
+      Yaw: 4.740478992462158
     Saved: ~
 Window Geometry:
   Displays:

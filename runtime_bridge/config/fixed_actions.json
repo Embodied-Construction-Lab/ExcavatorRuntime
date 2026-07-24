@@ -5,14 +5,14 @@
   "action_order": ["boom", "stick", "bucket", "swing"],
   "validation_status": "candidate",
   "validation_evidence": null,
-  "machine_profile_sha256": "a24ba6f15420905dffe080eaf0c506f755fd040c6587668b14b522b8de575ced",
-  "urdf_sha256": "dcf5b64a538a739f3f6ae2b390e7e0bcd6de5cc5924edaefe446c5586632f6db",
+  "machine_profile_sha256": "baae58034e14d923a1b28318c123500ab5e395a385284f50da068311275ce85a",
+  "urdf_sha256": "c1dffdac1e460682c4d6c45187e0fbb6e5a8323a189ddbc4fd66e0696919ef62",
   "controller": {
     "kp": 1.5,
     "min_action": 0.6,
     "max_action": 0.6,
     "tolerance": 0.03,
-    "step_timeout_s": 3.0,
+    "step_timeout_s": 6.0,
     "hold_s": 0.15
   },
   "start_envelopes": {

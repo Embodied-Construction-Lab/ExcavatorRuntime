@@ -139,6 +139,9 @@ class LiveMachineBehaviorNode(Node):
         )
         self._adapter = UnityObservationAdapter()
         self._max_state_age_s = self._config.policy.machine_state_timeout_ms / 1000.0
+        self._bucket_tip_timeout_s = (
+            self._config.policy.bucket_tip_timeout_ms / 1000.0
+        )
         self._callback_group = ReentrantCallbackGroup()
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
@@ -147,6 +150,7 @@ class LiveMachineBehaviorNode(Node):
         self._last_remote_state_stamp_ms: int | None = None
         self._remote_clock_offset_ms: int | None = None
         self._latest_state: StateSample | None = None
+        self._states: dict[int, StateSample] = {}
         self._tips: dict[int, PoseStamped] = {}
         self._planned_trajectories: dict[str, str] = {}
         self._active_behavior = ""
@@ -349,6 +353,9 @@ class LiveMachineBehaviorNode(Node):
                 self._state_sequence += 1
                 sample = replace(sample, sequence=self._state_sequence)
                 self._latest_state = sample
+                self._states[packet.stamp_ms] = sample
+                while len(self._states) > 32:
+                    self._states.pop(next(iter(self._states)))
                 self._condition.notify_all()
             self._publish_joint_state(packet)
 
@@ -631,9 +638,9 @@ class LiveMachineBehaviorNode(Node):
         }
         previous_action = [0.0] * 4
         last_sequence = self._state_sequence
-        last_sample: StateSample | None = self._latest_state
         pending_physical: list[float] | None = None
         started = time.monotonic()
+        last_synchronized_at_s = started
         start_datagrams = self._command_sink.action_datagrams
         latest_distance = -1.0
         try:
@@ -651,12 +658,29 @@ class LiveMachineBehaviorNode(Node):
                     )
                 if goal_handle.is_cancel_requested:
                     return self._finish_follow(goal_handle, Follow.Result.OUTCOME_CANCELLED, "CANCELLED", "Follow cancelled", session, latest_distance, start_datagrams)
-                sample = self._wait_state(last_sequence, timeout_s=0.05)
-                if sample is None:
-                    if last_sample is None or self._state_age_s(last_sample) > self._max_state_age_s:
+                synchronized = self._wait_state_tip_pair(
+                    last_sequence, timeout_s=0.05
+                )
+                if synchronized is None:
+                    latest_sample = self._latest_state
+                    if (
+                        latest_sample is None
+                        or self._state_age_s(latest_sample) > self._max_state_age_s
+                    ):
                         return self._finish_follow(goal_handle, Follow.Result.OUTCOME_FAILED, "STATE_STALE", "no fresh Machine State", session, latest_distance, start_datagrams)
-                    if pending_physical is None:
-                        continue
+                    if (
+                        time.monotonic() - last_synchronized_at_s
+                        >= self._bucket_tip_timeout_s
+                    ):
+                        return self._finish_follow(
+                            goal_handle,
+                            Follow.Result.OUTCOME_FAILED,
+                            "STATE_TIP_NOT_SYNCHRONIZED",
+                            self._state_tip_timeout_message(latest_sample),
+                            session,
+                            latest_distance,
+                            start_datagrams,
+                        )
                     supervision = self._follow_supervision_decision(snapshot.trajectory_id)
                     if not supervision.allowed:
                         return self._finish_follow(
@@ -668,19 +692,25 @@ class LiveMachineBehaviorNode(Node):
                             latest_distance,
                             start_datagrams,
                         )
+                    newer_state_waits_for_tip = (
+                        latest_sample.sequence > last_sequence
+                    )
+                    action = (
+                        [0.0] * 4
+                        if newer_state_waits_for_tip or pending_physical is None
+                        else pending_physical
+                    )
                     decision = self._send_motion(
-                        last_sample,
-                        pending_physical,
+                        latest_sample,
+                        action,
                         physical_envelope=self._follow_envelope,
                     )
                     if not decision.allowed:
                         return self._finish_follow(goal_handle, Follow.Result.OUTCOME_FAILED, decision.reason.upper(), "motion safety gate closed", session, latest_distance, start_datagrams)
                     continue
+                sample, tip_message = synchronized
                 last_sequence = sample.sequence
-                last_sample = sample
-                tip_message = self._wait_tip(sample.packet.stamp_ms, timeout_s=0.25)
-                if tip_message is None:
-                    return self._finish_follow(goal_handle, Follow.Result.OUTCOME_FAILED, "STATE_TIP_NOT_SYNCHRONIZED", "no FK tip with the same source stamp", session, latest_distance, start_datagrams)
+                last_synchronized_at_s = time.monotonic()
                 now_s = self._now_s()
                 tip_ros = (
                     float(tip_message.pose.position.x),
@@ -906,7 +936,10 @@ class LiveMachineBehaviorNode(Node):
         if sample is None:
             return self._finish_fixed(goal_handle, action_type, action_type.Result.OUTCOME_FAILED, "STALE_MACHINE_STATE", "no Machine State", start_datagrams)
         if self._control_policy.name == "production":
-            tip = self._wait_tip(sample.packet.stamp_ms, timeout_s=0.25)
+            tip = self._wait_tip(
+                sample.packet.stamp_ms,
+                timeout_s=self._bucket_tip_timeout_s,
+            )
             if tip is None or math.dist(
                 (tip.pose.position.x, tip.pose.position.y, tip.pose.position.z),
                 (target.position.x, target.position.y, target.position.z),
@@ -997,7 +1030,19 @@ class LiveMachineBehaviorNode(Node):
             feedback.action_datagrams = self._command_sink.action_datagrams - start_datagrams
             goal_handle.publish_feedback(feedback)
             if status.failed:
-                return self._finish_fixed(goal_handle, action_type, action_type.Result.OUTCOME_FAILED, status.reason_code, "fixed action failed", start_datagrams)
+                message = (
+                    f"fixed action failed at step={status.step_label}, "
+                    f"phase={status.phase}, max_error={status.max_error:.6f}"
+                )
+                self.get_logger().error(message)
+                return self._finish_fixed(
+                    goal_handle,
+                    action_type,
+                    action_type.Result.OUTCOME_FAILED,
+                    status.reason_code,
+                    message,
+                    start_datagrams,
+                )
             if status.done:
                 return self._finish_fixed(goal_handle, action_type, action_type.Result.OUTCOME_SUCCEEDED, "SEQUENCE_COMPLETED", "fixed action sequence completed", start_datagrams)
 
@@ -1024,6 +1069,37 @@ class LiveMachineBehaviorNode(Node):
                     return None
                 self._condition.wait(remaining)
         return None
+
+    def _wait_state_tip_pair(
+        self, after_sequence: int, *, timeout_s: float
+    ) -> tuple[StateSample, PoseStamped] | None:
+        deadline = time.monotonic() + timeout_s
+        with self._condition:
+            while not self._stopping:
+                candidates = [
+                    (sample, self._tips[sample.packet.stamp_ms])
+                    for sample in self._states.values()
+                    if sample.sequence > after_sequence
+                    and sample.packet.stamp_ms in self._tips
+                ]
+                if candidates:
+                    return max(candidates, key=lambda pair: pair[0].sequence)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return None
+                self._condition.wait(remaining)
+        return None
+
+    def _state_tip_timeout_message(self, state: StateSample) -> str:
+        with self._condition:
+            latest_tip_stamp_ms = max(self._tips, default=None)
+        return (
+            "no synchronized Machine State and FK Bucket Tip for "
+            f"{self._config.policy.bucket_tip_timeout_ms} ms; "
+            f"latest_state_seq={state.packet.seq}, "
+            f"latest_state_stamp_ms={state.packet.stamp_ms}, "
+            f"latest_tip_stamp_ms={latest_tip_stamp_ms}"
+        )
 
     def _finish_follow(self, goal_handle, outcome, reason, message, session, distance, start_datagrams):
         quiescent = self._stop_and_release()

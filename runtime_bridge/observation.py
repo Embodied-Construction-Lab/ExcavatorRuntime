@@ -108,18 +108,28 @@ def position_observation_range(actuator: Mapping[str, Any]) -> tuple[float, floa
     return lower, upper
 
 
+def unity_observation_sign(actuator: Mapping[str, Any]) -> float:
+    """返回原始执行器反馈映射到 Unity 策略观测时使用的符号。"""
+    observation_sign = actuator.get(
+        "deploy_observation_sign", actuator.get("sign", 1)
+    )
+    if isinstance(observation_sign, bool) or observation_sign not in {-1, 1}:
+        raise ValueError("deploy_observation_sign must be -1 or +1")
+    return float(observation_sign)
+
+
 def normalize_position(raw_position: float, actuator: Mapping[str, Any]) -> float:
     """按部署绝对编码器范围（或 Unity 回退范围）映射到 [-1, 1]。"""
     range_min, range_max = position_observation_range(actuator)
     span = range_max - range_min
-    sign = float(actuator.get("sign", 1.0) or 1.0)
+    sign = unity_observation_sign(actuator)
     normalized = (float(raw_position) - range_min) / span * 2.0 - 1.0
     return clamp(normalized * sign)
 
 
 def normalize_velocity(raw_velocity: float, actuator: dict[str, Any]) -> float:
     """按正负方向最大速度把速度归一化，和 Unity NormalizedActuatorVelocity 对齐。"""
-    sign = float(actuator.get("sign", 1.0) or 1.0)
+    sign = unity_observation_sign(actuator)
     signed_velocity = float(raw_velocity) * sign
     max_speed = (
         float(actuator["max_speed_positive"])
@@ -171,7 +181,9 @@ class ObservationBuilder:
 
         # 6..8：swing 用 sin/cos 表示角度，速度按 max speed 归一化。
         swing_state = state.actuator_state["swing"]
-        swing_angle = float(swing_state["position_rad"])
+        swing_angle = float(swing_state["position_rad"]) * unity_observation_sign(
+            actuators["swing"]
+        )
         obs.extend(
             [
                 math.sin(swing_angle),
