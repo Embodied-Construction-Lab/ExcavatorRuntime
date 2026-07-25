@@ -1,9 +1,9 @@
 # 挖掘机运动学
 
-`waji_description` 是当前 FK 的权威实现。它使用
-`/home/zhaoshuai/workspace_uinty/RL_prj/urdf/urdf/waji.urdf` 中重新实测的
-物理尺寸、关节零位和 tip 固定姿态；集成副本有字节一致性测试，禁止从旧手写 FK 或
-`excavator_geometry.yaml` 回写这些数值。
+`waji_description` 是当前 FK 的权威实现。权威文件是仓库内
+`waji_description/urdf/waji.urdf`，包含重新实测的物理尺寸、关节零位和 tip
+固定姿态。工作区根目录的历史 `urdf/` 项目已退出活动范围；禁止从它、旧手写 FK
+或 `excavator_geometry.yaml` 回写这些数值。
 
 ROS 内部统一使用右手 `machine_root_ros`：`+X` 前、`+Y` 左、`+Z` 上。
 测量 URDF 保留其原生、同为右手的 `fk_root` 链接名。启动文件显式发布单位变换

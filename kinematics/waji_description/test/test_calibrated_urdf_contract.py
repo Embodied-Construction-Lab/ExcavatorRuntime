@@ -1,9 +1,4 @@
-"""Regression contract for the measured excavator URDF.
-
-The source project at ``RL_prj/urdf`` is the authority for physical geometry
-and encoder-zero angles.  The legacy hand-written FK is only a migration
-baseline and must never cause these values to be changed back.
-"""
+"""Regression contract for the integrated measured excavator URDF."""
 
 from pathlib import Path
 import unittest
@@ -12,7 +7,6 @@ import xml.etree.ElementTree as ET
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 URDF_PATH = PACKAGE_ROOT / "urdf" / "waji.urdf"
-CANONICAL_URDF_PATH = PACKAGE_ROOT.parents[2] / "urdf" / "urdf" / "waji.urdf"
 
 
 def _joint(root: ET.Element, name: str) -> ET.Element:
@@ -33,13 +27,8 @@ class CalibratedUrdfContractTest(unittest.TestCase):
     def setUp(self):
         self.root = ET.parse(URDF_PATH).getroot()
 
-    def test_integrated_urdf_is_byte_identical_to_the_measured_source(self):
-        self.assertTrue(CANONICAL_URDF_PATH.is_file())
-        self.assertEqual(URDF_PATH.read_bytes(), CANONICAL_URDF_PATH.read_bytes())
-
     def test_fk_chain_uses_current_machine_geometry_and_encoder_zeroes(self):
-        # These values come from the newly remeasured physical model in
-        # RL_prj/urdf.  Change only after a new documented physical survey.
+        # Change these integrated measured values only after a documented survey.
         expected = {
             "fk_root_to_base": ((-0.06, 0.0, -0.18), (0.0, 0.0, 0.0)),
             "swing_joint": ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),

@@ -1,8 +1,8 @@
 # waji_description
 
-此 ROS 2 包以重新测量的 [`urdf/waji.urdf`](urdf/waji.urdf) 为唯一 FK 几何来源。该文件
-在测试中必须与工作区权威源 `/home/zhaoshuai/workspace_uinty/RL_prj/urdf/urdf/waji.urdf`
-字节一致；不要用旧手写 FK 的 offset、sign 或 tip RPY 覆盖它。
+此 ROS 2 包以重新测量的 [`urdf/waji.urdf`](urdf/waji.urdf) 为唯一 FK 几何来源。
+工作区根目录的历史 `urdf/` 项目已退出活动范围；不要从该目录或旧手写 FK
+反向覆盖这里的 offset、sign 或 tip RPY。
 
 模型本身的 `fk_root` 是右手 ROS 坐标（`+X` 前、`+Y` 左、`+Z` 上）。
 `display.launch.py` 通过显式单位 TF 将它置于唯一系统根 `machine_root_ros` 下，启动：
