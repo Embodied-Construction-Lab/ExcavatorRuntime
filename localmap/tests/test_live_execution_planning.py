@@ -96,12 +96,14 @@ class LiveExecutionPlanningTests(unittest.TestCase):
             source_local_map_stamp_s=9.7,
             inputs_frozen_at_s=10.0,
             created_at_s=10.0,
+            waypoint_tolerance_m=0.25,
             waypoint_dwell_s=0.3,
             tracking_timeout_s=20.0,
             control_stage="commissioning",
         )
         self.assertTrue(fields["execution_eligible"])
         self.assertEqual(fields["map_source"], "live_local_map")
+        self.assertEqual(fields["waypoint_tolerance_m"], 0.25)
 
         with self.assertRaisesRegex(ValueError, "workspace constraint provenance"):
             build_execution_snapshot_fields(
@@ -111,6 +113,7 @@ class LiveExecutionPlanningTests(unittest.TestCase):
                 source_local_map_stamp_s=9.7,
                 inputs_frozen_at_s=10.0,
                 created_at_s=10.0,
+                waypoint_tolerance_m=0.25,
                 waypoint_dwell_s=0.3,
                 tracking_timeout_s=20.0,
                 control_stage="commissioning",
@@ -124,6 +127,7 @@ class LiveExecutionPlanningTests(unittest.TestCase):
                 source_local_map_stamp_s=9.7,
                 inputs_frozen_at_s=10.0,
                 created_at_s=10.0,
+                waypoint_tolerance_m=0.25,
                 waypoint_dwell_s=0.3,
                 tracking_timeout_s=20.0,
                 control_stage="commissioning",
@@ -136,6 +140,7 @@ class LiveExecutionPlanningTests(unittest.TestCase):
                 source_local_map_stamp_s=9.7,
                 inputs_frozen_at_s=10.0,
                 created_at_s=10.0,
+                waypoint_tolerance_m=0.25,
                 waypoint_dwell_s=0.3,
                 tracking_timeout_s=20.0,
                 control_stage="commissioning",
@@ -173,6 +178,7 @@ class LiveExecutionPlanningTests(unittest.TestCase):
             source_local_map_stamp_s=9.7,
             inputs_frozen_at_s=10.0,
             created_at_s=15.0,
+            waypoint_tolerance_m=0.25,
             waypoint_dwell_s=0.3,
             tracking_timeout_s=20.0,
             control_stage="commissioning",

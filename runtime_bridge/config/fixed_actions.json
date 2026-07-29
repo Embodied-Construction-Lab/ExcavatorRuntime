@@ -1,18 +1,18 @@
 {
-  "schema_version": "fixed_action_profile.v1",
-  "profile_id": "scale_excavator_candidate_v1",
+  "schema_version": "fixed_action_profile.v2",
+  "profile_id": "scale_excavator_absolute_targets_candidate_v2",
   "machine_id": "scale_excavator_v1",
   "action_order": ["boom", "stick", "bucket", "swing"],
   "validation_status": "candidate",
   "validation_evidence": null,
-  "machine_profile_sha256": "086ec5449350de39b3560a98b1ec03a8facde0e933949ab88630d9b0ed055012",
-  "urdf_sha256": "dcf5b64a538a739f3f6ae2b390e7e0bcd6de5cc5924edaefe446c5586632f6db",
+  "machine_profile_sha256": "4b8c94484389429c2c3871857d928e46ec93fa1b62c66df459336868b00d2f89",
+  "urdf_sha256": "c1dffdac1e460682c4d6c45187e0fbb6e5a8323a189ddbc4fd66e0696919ef62",
   "controller": {
     "kp": 1.5,
-    "min_action": 0.08,
-    "max_action": 1.0,
+    "min_action": 0.6,
+    "max_action": 0.6,
     "tolerance": 0.03,
-    "step_timeout_s": 3.0,
+    "step_timeout_s": 10.0,
     "hold_s": 0.15
   },
   "start_envelopes": {
@@ -22,7 +22,6 @@
         "stick": [-1.0, 1.0],
         "bucket": [-1.0, 1.0]
       },
-      "bucket_pitch_deg": [-180.0, 180.0],
       "swing_rad": [-1.57, 1.57]
     },
     "dump": {
@@ -31,62 +30,43 @@
         "stick": [-1.0, 1.0],
         "bucket": [-1.0, 1.0]
       },
-      "bucket_pitch_deg": [-180.0, 180.0],
       "swing_rad": [-1.57, 1.57]
     }
   },
   "actions": {
     "dig": [
       {
-        "step_id": "dig_probe",
-        "label": "probe",
-        "delta_by_actuator": {
-          "boom": 0.25,
-          "stick": 0.0,
-          "bucket": 0.0,
-          "swing": 0.0
+          "step_id": "dig_prepare_tool",
+          "label": "position_stick_and_bucket",
+          "target_normalized_position": {
+            "stick": -0.15,
+            "bucket": 0.9,
+            "boom": 0.6
+          }
+        },
+        {
+          "step_id": "dig_curl_and_retract",
+          "label": "bucket_negative_endpoint_and_retract_stick",
+          "target_normalized_position": {
+            "stick": 0.15,
+            "bucket": -0.85,
+            "boom": -0.35
+          }
         }
-      },
-      {
-        "step_id": "dig_curl_bucket",
-        "label": "curl_bucket",
-        "delta_by_actuator": {
-          "boom": 0.0,
-          "stick": 0.0,
-          "bucket": -1.4,
-          "swing": 0.0
-        }
-      },
-      {
-        "step_id": "dig_lift_bucket",
-        "label": "lift_bucket",
-        "delta_by_actuator": {
-          "boom": -0.25,
-          "stick": 0.1,
-          "bucket": 0.0,
-          "swing": 0.0
-        }
-      }
-    ],
+      ],
     "dump": [
       {
         "step_id": "dump_open_bucket",
         "label": "open_bucket",
-        "delta_by_actuator": {
-          "boom": 0.0,
-          "stick": 0.0,
-          "bucket": 1.4,
-          "swing": 0.0
+        "target_normalized_position": {
+          "bucket": 0.9
         }
       },
       {
         "step_id": "dump_recover_bucket",
         "label": "recover_bucket",
-        "delta_by_actuator": {
-          "boom": 0.0,
-          "stick": 0.0,
-          "bucket": -1.4,
-          "swing": 0.0
+        "target_normalized_position": {
+          "bucket": -0.85
         }
       }
     ]

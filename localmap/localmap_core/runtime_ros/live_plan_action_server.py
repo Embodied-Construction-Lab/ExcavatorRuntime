@@ -41,9 +41,11 @@ from localmap_core.live_execution_planning import (
     inject_live_target,
     validate_execution_workspace_provenance,
 )
+from localmap_core.mission_target_registry import resolve_planning_target
 from localmap_core.planning_inputs import LivePlanningInputs, load_live_planning_inputs
 from localmap_core.planning_profile import load_planning_profile
 from mission.contract import load_mission
+from mission.demo import load_demo_program
 from runtime_bridge.runtime_config import load_runtime_config
 from runtime_bridge.control_stage import CONTROL_STAGES, control_stage_policy
 
@@ -54,6 +56,7 @@ class LivePlanActionNode(Node):
         *,
         profile_path: FsPath,
         mission_path: FsPath,
+        demo_path: FsPath | None = None,
         urdf_path: FsPath,
         runtime_config_path: FsPath,
         control_stage: str,
@@ -62,6 +65,7 @@ class LivePlanActionNode(Node):
         super().__init__("live_plan_server", context=context)
         self._profile = load_planning_profile(profile_path)
         self._mission = load_mission(mission_path)
+        self._demo = load_demo_program(demo_path) if demo_path is not None else None
         load_runtime_config(runtime_config_path)
         self._control_policy = control_stage_policy(control_stage)
         self._allowed_target_statuses = self._control_policy.allowed_target_statuses
@@ -135,11 +139,14 @@ class LivePlanActionNode(Node):
             raise ValueError("live control only accepts execution_strict")
         if target.header.frame_id != "machine_root_ros":
             raise ValueError("target frame must be machine_root_ros")
-        if target.mission_id != self._mission.mission_id or target.mission_sha256 != self._mission.sha256:
-            raise ValueError("target does not match loaded Mission snapshot")
+        resolved = resolve_planning_target(
+            target,
+            mission=self._mission,
+            demo=self._demo,
+        )
         if (
-            self._mission.target_status not in self._allowed_target_statuses
-            or target.target_status != self._mission.target_status
+            resolved.target_status not in self._allowed_target_statuses
+            or target.target_status != resolved.target_status
         ):
             allowed = ", ".join(sorted(self._allowed_target_statuses))
             raise ValueError(
@@ -147,7 +154,7 @@ class LivePlanActionNode(Node):
             )
         if target.target_kind not in {"dig", "dump"} or target.mission_phase != target.target_kind:
             raise ValueError("target phase mismatch")
-        expected = self._mission.targets[target.target_kind]
+        expected = resolved.target
         actual = (target.position.x, target.position.y, target.position.z)
         if math.dist(actual, expected.position_m) > 1e-9 or abs(target.radius_m - expected.radius_m) > 1e-9:
             raise ValueError("target geometry does not match loaded Mission snapshot")
@@ -162,6 +169,11 @@ class LivePlanActionNode(Node):
             inputs_frozen_at_s = self._now_s()
             live = load_live_planning_inputs(self._profile, now_s=inputs_frozen_at_s)
             target = _target_dict(goal_handle.request.target)
+            resolved = resolve_planning_target(
+                goal_handle.request.target,
+                mission=self._mission,
+                demo=self._demo,
+            )
             local_map, intent = inject_live_target(live.local_map, target)
             snapshot = LivePlanningInputs(local_map=local_map, bucket_tip=live.bucket_tip)
             invalidate_outputs(self._profile.outputs)
@@ -191,8 +203,9 @@ class LivePlanActionNode(Node):
                 source_local_map_stamp_s=float(live.local_map["timestamp_s"]),
                 inputs_frozen_at_s=inputs_frozen_at_s,
                 created_at_s=created_at_s,
-                waypoint_dwell_s=self._mission.limits.waypoint_dwell_s,
-                tracking_timeout_s=self._mission.limits.tracking_timeout_s,
+                waypoint_tolerance_m=resolved.limits.waypoint_tolerance_m,
+                waypoint_dwell_s=resolved.limits.waypoint_dwell_s,
+                tracking_timeout_s=resolved.limits.tracking_timeout_s,
                 control_stage=self._control_policy.name,
             )
             message = _trajectory_message(fields, target["target_id"])
@@ -326,6 +339,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Live execution-strict Plan Action server")
     parser.add_argument("--profile", type=FsPath, required=True)
     parser.add_argument("--mission", type=FsPath, required=True)
+    parser.add_argument("--demo", type=FsPath)
     parser.add_argument("--urdf", type=FsPath, required=True)
     parser.add_argument("--runtime-config", type=FsPath, required=True)
     parser.add_argument("--control-stage", choices=CONTROL_STAGES, required=True)
@@ -334,6 +348,7 @@ def main() -> None:
     node = LivePlanActionNode(
         profile_path=args.profile,
         mission_path=args.mission,
+        demo_path=args.demo,
         urdf_path=args.urdf,
         runtime_config_path=args.runtime_config,
         control_stage=args.control_stage,

@@ -39,7 +39,8 @@ def test_slow_live_plan_snapshot_is_accepted_by_follow_contract():
         source_local_map_stamp_s=9.7,
         inputs_frozen_at_s=10.0,
         created_at_s=15.0,
-        waypoint_dwell_s=0.3,
+        waypoint_tolerance_m=0.25,
+        waypoint_dwell_s=0.0,
         tracking_timeout_s=20.0,
         control_stage="commissioning",
     )

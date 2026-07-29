@@ -33,10 +33,14 @@ class _ActionFixture(Node):
         self.release_follow = threading.Event()
         mission = load_mission(MISSION_PATH)
         self.plan_snapshot = self._snapshot(
-            mission.sha256, "per-goal-result", x=0.6
+            mission.sha256,
+            "per-goal-result",
+            position=mission.targets["dig"].position_m,
         )
         self.preview_snapshot = self._snapshot(
-            mission.sha256, "unrelated-preview", x=9.0
+            mission.sha256,
+            "unrelated-preview",
+            position=(9.0, 0.3, 0.2),
         )
         self.followed = []
         self.plan_requests = 0
@@ -73,7 +77,7 @@ class _ActionFixture(Node):
             cancel_callback=lambda _request: CancelResponse.ACCEPT,
         )
 
-    def _snapshot(self, mission_sha256, trajectory_id, *, x):
+    def _snapshot(self, mission_sha256, trajectory_id, *, position):
         now = self.get_clock().now()
         snapshot = TrajectorySnapshot()
         snapshot.header.frame_id = "machine_root_ros"
@@ -97,7 +101,9 @@ class _ActionFixture(Node):
         snapshot.input_source = "fixture"
         snapshot.map_source = "fixture_empty"
         snapshot.clock_mode = "ros_clock"
-        snapshot.waypoints = [Point(x=x, y=0.3, z=0.2)]
+        snapshot.waypoints = [
+            Point(x=position[0], y=position[1], z=position[2])
+        ]
         snapshot.waypoint_tolerance_m = 0.05
         snapshot.waypoint_dwell_s = 0.3
         snapshot.tracking_timeout_s = 2.0

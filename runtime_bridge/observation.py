@@ -26,7 +26,34 @@ class BucketTipObservation:
 
 def load_machine_profile(path: Path) -> dict[str, Any]:
     """读取唯一机型常数来源 machine_profile.json。"""
-    return json.loads(path.read_text(encoding="utf-8"))
+    profile = json.loads(path.read_text(encoding="utf-8"))
+    actuators = profile.get("actuators")
+    if isinstance(actuators, Mapping):
+        for name, actuator in actuators.items():
+            if isinstance(actuator, Mapping):
+                normalized_command_deadzones(actuator, actuator_name=str(name))
+    return profile
+
+
+def normalized_command_deadzones(
+    actuator: Mapping[str, Any], *, actuator_name: str = "actuator"
+) -> tuple[float, float]:
+    """读取正负归一化策略命令死区；未配置时保持零死区以支持现场标定。"""
+    values: list[float] = []
+    for direction in ("positive", "negative"):
+        field_name = f"command_deadzone_{direction}_normalized"
+        value = actuator.get(field_name, 0.0)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or not 0.0 <= float(value) < 1.0
+        ):
+            raise ValueError(
+                f"{actuator_name}.{field_name} must be finite and in [0, 1)"
+            )
+        values.append(float(value))
+    return values[0], values[1]
 
 
 def load_waypoint_slice_values(path: Path) -> list[float]:
@@ -52,16 +79,12 @@ def position_observation_range(actuator: Mapping[str, Any]) -> tuple[float, floa
     configured_range = actuator.get("range")
     if deploy is not None:
         required_fields = {"source", "range", "status"}
-        optional_fields = {"command_to_encoder_velocity_sign"}
         if (
             not isinstance(deploy, Mapping)
             or not required_fields.issubset(deploy)
-            or set(deploy) - required_fields - optional_fields
+            or set(deploy) - required_fields
         ):
             raise ValueError("deploy_position_observation contract is invalid")
-        command_sign = deploy.get("command_to_encoder_velocity_sign")
-        if command_sign is not None and command_sign not in {-1, 1}:
-            raise ValueError("deploy_position_observation command sign is invalid")
         if deploy.get("source") != "stm32_absolute_cable_encoder":
             raise ValueError("deploy_position_observation source is invalid")
         if deploy.get("status") not in {"firmware_safety_bounds", "field_calibrated"}:
@@ -85,18 +108,28 @@ def position_observation_range(actuator: Mapping[str, Any]) -> tuple[float, floa
     return lower, upper
 
 
+def unity_observation_sign(actuator: Mapping[str, Any]) -> float:
+    """返回原始执行器反馈映射到 Unity 策略观测时使用的符号。"""
+    observation_sign = actuator.get(
+        "deploy_observation_sign", actuator.get("sign", 1)
+    )
+    if isinstance(observation_sign, bool) or observation_sign not in {-1, 1}:
+        raise ValueError("deploy_observation_sign must be -1 or +1")
+    return float(observation_sign)
+
+
 def normalize_position(raw_position: float, actuator: Mapping[str, Any]) -> float:
     """按部署绝对编码器范围（或 Unity 回退范围）映射到 [-1, 1]。"""
     range_min, range_max = position_observation_range(actuator)
     span = range_max - range_min
-    sign = float(actuator.get("sign", 1.0) or 1.0)
+    sign = unity_observation_sign(actuator)
     normalized = (float(raw_position) - range_min) / span * 2.0 - 1.0
     return clamp(normalized * sign)
 
 
 def normalize_velocity(raw_velocity: float, actuator: dict[str, Any]) -> float:
     """按正负方向最大速度把速度归一化，和 Unity NormalizedActuatorVelocity 对齐。"""
-    sign = float(actuator.get("sign", 1.0) or 1.0)
+    sign = unity_observation_sign(actuator)
     signed_velocity = float(raw_velocity) * sign
     max_speed = (
         float(actuator["max_speed_positive"])
@@ -148,7 +181,9 @@ class ObservationBuilder:
 
         # 6..8：swing 用 sin/cos 表示角度，速度按 max speed 归一化。
         swing_state = state.actuator_state["swing"]
-        swing_angle = float(swing_state["position_rad"])
+        swing_angle = float(swing_state["position_rad"]) * unity_observation_sign(
+            actuators["swing"]
+        )
         obs.extend(
             [
                 math.sin(swing_angle),

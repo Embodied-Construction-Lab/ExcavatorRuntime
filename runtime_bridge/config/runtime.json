@@ -3,13 +3,13 @@
   "network": {
     "state_bind_host": "0.0.0.0",
     "state_port": 18081,
-    "orin_host": "192.168.2.88",
+    "orin_host": "192.168.0.55",
     "action_port": 18082,
     "action_valid_ms": 100,
     "action_time_source": "orin"
   },
   "artifacts": {
-    "onnx": "../RLExcavator/Assets/AIModels/ExcavatorTrajectory-7496592.onnx",
+    "onnx": "../RLExcavator/Assets/AIModels/ScaleModelDeploy05_cale_v3_deadzone_reward_03_p003.onnx",
     "machine_profile": "../shared/machine_profile.json",
     "fixed_action_profile": "runtime_bridge/config/fixed_actions.json",
     "urdf": "kinematics/waji_description/urdf/waji.urdf",
@@ -21,7 +21,7 @@
     "machine_state_timeout_ms": 500
   },
   "fixed_action": {
-    "expected_profile_sha256": "de4166f0b6855a5ead1f6a4eb9ec7ebc7b140c6335d3942cc487adf607126eda"
+    "expected_profile_sha256": "e88bb551dd5e3bf08a766f08f6a695412e7e719a8647011d88026d3c405144c8"
   },
   "manual_jog": {
     "enabled": true,
@@ -29,8 +29,7 @@
     "speed_fraction": 0.2,
     "command_period_ms": 50,
     "heartbeat_timeout_ms": 175,
-    "max_hold_ms": 1000,
-    "position_margin_m": 0.002
+    "max_hold_ms": 1000
   },
   "follow_control": {
     "mode": "supervised_canary",

@@ -32,6 +32,7 @@ _MAP_SOURCES = {
 }
 _CLOCK_MODES = {"ros_clock"}
 _MAX_SOURCE_AGE_S = 2.0
+_MAX_CLOCK_SKEW_S = 0.5
 
 
 class TrajectoryDigestMismatch(ValueError):
@@ -112,10 +113,12 @@ class FollowTrajectorySnapshot:
             raise ValueError("waypoints must not be empty")
         for point in self.waypoints:
             _triplet("waypoint", point)
-        for name in ("waypoint_tolerance_m", "waypoint_dwell_s", "tracking_timeout_s"):
+        for name in ("waypoint_tolerance_m", "tracking_timeout_s"):
             value = _finite(name, getattr(self, name))
             if value <= 0.0:
                 raise ValueError(f"{name} must be positive")
+        if _finite("waypoint_dwell_s", self.waypoint_dwell_s) < 0.0:
+            raise ValueError("waypoint_dwell_s must be nonnegative")
 
     def validate_for_shadow(self, *, expected_input_source: str, now_s: float) -> None:
         current = _finite("now_s", now_s)
@@ -125,7 +128,7 @@ class FollowTrajectorySnapshot:
             raise ValueError("input_source does not match runtime")
         if current > self.valid_until_s:
             raise ValueError("trajectory snapshot expired")
-        if current + 1e-6 < self.created_at_s:
+        if current + _MAX_CLOCK_SKEW_S < self.created_at_s:
             raise ValueError("trajectory snapshot is from the future")
         if self.trajectory_sha256 != self.computed_sha256():
             raise TrajectoryDigestMismatch(
@@ -157,7 +160,7 @@ class FollowTrajectorySnapshot:
             raise ValueError("trajectory workspace_constraint does not match control_stage")
         if current > self.valid_until_s:
             raise ValueError("trajectory snapshot expired")
-        if current + 1e-6 < self.created_at_s:
+        if current + _MAX_CLOCK_SKEW_S < self.created_at_s:
             raise ValueError("trajectory snapshot is from the future")
         if self.trajectory_sha256 != self.computed_sha256():
             raise TrajectoryDigestMismatch(

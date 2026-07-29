@@ -317,6 +317,36 @@ def prepare_mission_planning_run(
     )
 
 
+def prepare_orin_edge_planning_run(
+    profile: PlanningProfile,
+    *,
+    mission_path: Path,
+    phase: str,
+    now_s: float,
+    python: Path,
+    staging_dir: Path,
+) -> PreparedPlanningRun:
+    """Freeze live inputs into an execution-strict artifact for Orin."""
+    mission = load_mission(mission_path)
+    live_inputs = load_live_planning_inputs(profile, now_s=now_s)
+    local_map, intent = inject_mission_target(live_inputs.local_map, mission, phase)
+    if profile.task_mode_by_target_kind[phase] != intent.task_mode:
+        raise ValueError("Mission phase与Planning Profile task mode不一致")
+    snapshot = LivePlanningInputs(
+        local_map=local_map,
+        bucket_tip=live_inputs.bucket_tip,
+    )
+    return prepare_planning_snapshot(
+        profile,
+        intent,
+        snapshot,
+        python=python,
+        staging_dir=staging_dir,
+        final_outputs=profile.outputs,
+        planning_scope="execution_strict",
+    )
+
+
 def prepare_planning_snapshot(
     profile: PlanningProfile,
     intent: PlanningIntent,
@@ -396,12 +426,8 @@ def _write_snapshot(path: Path, value: Mapping) -> None:
     )
 
 
-def execute_prepared_run(prepared: PreparedPlanningRun, *, dry_run: bool) -> None:
-    """执行同一快照的规划；步骤全部成功后才逐个替换最终产物。"""
-    if dry_run:
-        execute_planning_commands(prepared.commands, dry_run=True)
-        return
-
+def execute_staged_run(prepared: PreparedPlanningRun) -> None:
+    """Execute and validate every planning step without publishing outputs."""
     prepared.staging_outputs.directory.mkdir(parents=True, exist_ok=True)
     _write_snapshot(prepared.local_map_snapshot, prepared.snapshot.local_map)
     _write_snapshot(prepared.bucket_tip_snapshot, prepared.snapshot.bucket_tip)
@@ -415,6 +441,9 @@ def execute_prepared_run(prepared: PreparedPlanningRun, *, dry_run: bool) -> Non
         if not path.is_file():
             raise ValueError(f"planning step 未生成预期产物: {path}")
 
+
+def publish_prepared_run(prepared: PreparedPlanningRun) -> None:
+    """Publish an already validated staged run; callers may add a commit marker."""
     prepared.final_outputs.directory.mkdir(parents=True, exist_ok=True)
     publish_pairs = tuple(
         (
@@ -425,6 +454,15 @@ def execute_prepared_run(prepared: PreparedPlanningRun, *, dry_run: bool) -> Non
     )
     for source, destination in publish_pairs:
         os.replace(source, destination)
+
+
+def execute_prepared_run(prepared: PreparedPlanningRun, *, dry_run: bool) -> None:
+    """执行同一快照的规划；步骤全部成功后才逐个替换最终产物。"""
+    if dry_run:
+        execute_planning_commands(prepared.commands, dry_run=True)
+        return
+    execute_staged_run(prepared)
+    publish_prepared_run(prepared)
 
 
 def require_ros_python(python: Path = ROS_PYTHON) -> None:

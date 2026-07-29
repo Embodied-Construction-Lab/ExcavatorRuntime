@@ -53,12 +53,20 @@ def _fields(name: str, value: object, expected: set[str]) -> dict:
     return value
 
 
-def _number(name: str, value: object, *, positive: bool = False) -> float:
+def _number(
+    name: str,
+    value: object,
+    *,
+    positive: bool = False,
+    nonnegative: bool = False,
+) -> float:
     if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
         raise MissionContractError(f"{name} 必须是有限数值")
     converted = float(value)
     if positive and converted <= 0.0:
         raise MissionContractError(f"{name} 必须大于0")
+    if nonnegative and converted < 0.0:
+        raise MissionContractError(f"{name} 必须大于等于0")
     return converted
 
 
@@ -118,7 +126,7 @@ def load_mission(path: Path) -> ExcavationMission:
         waypoint_dwell_s=_number(
             "limits.waypoint_dwell_s",
             limit_data["waypoint_dwell_s"],
-            positive=True,
+            nonnegative=True,
         ),
         tracking_timeout_s=_number(
             "limits.tracking_timeout_s",
@@ -127,6 +135,16 @@ def load_mission(path: Path) -> ExcavationMission:
         ),
         settle_s=_number("limits.settle_s", limit_data["settle_s"], positive=True),
     )
+    undersized_targets = [
+        name
+        for name, target in targets.items()
+        if target.radius_m + 1e-9 < limits.waypoint_tolerance_m
+    ]
+    if undersized_targets:
+        names = ", ".join(undersized_targets)
+        raise MissionContractError(
+            f"目标半径必须大于等于waypoint容差: {names}"
+        )
     return ExcavationMission(
         mission_id=root["mission_id"],
         mission_type=root["mission_type"],

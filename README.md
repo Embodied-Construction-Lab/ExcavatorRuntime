@@ -64,20 +64,44 @@ ros2 launch airy_excavator_bringup operator.launch.py profile:=fixture_shadow
 ros2 launch airy_excavator_bringup operator.launch.py profile:=live_shadow
 ```
 
-真机联调与生产准入复用同一套 Plan、Follow 和 UDP Command Sink，实现差异只由一个
-`control_stage` 策略决定。当前先使用 `live_commissioning` 跑通感知→规划→ONNX→真机反馈闭环：
+当前 `live_commissioning` 已切换到端侧 Follow 和固定动作：
+
+```text
+PC 感知/目标/规划 → 完整 Trajectory Snapshot → Orin FK/38D/ONNX/跟踪
+                                               → loopback Action Relay → STM32
+PC ExecuteDig/ExecuteDump → 动作名称 → Orin 本地固定动作闭环
+                                      → loopback Action Relay → STM32
+```
+
+PC 仍运行 RViz Panel、雷达感知和规划，但不会构造物理速度 UDP sender，也不会加载 ONNX。
+先启动 Orin 的 `remote_control`，再在 PC 启动：
 
 ```bash
 ros2 launch airy_excavator_bringup operator.launch.py \
   profile:=live_commissioning \
-  motion_authorization:=ALLOW_LIVE_MACHINE_MOTION
+  motion_authorization:=ALLOW_LIVE_MACHINE_MOTION \
+  orin_host:=192.168.0.55 \
+  orin_port:=18083
 ```
 
-`live_commissioning` 仍强制精确运动授权、`control_enabled`、STM32 alive、传感器有效、无急停/故障、
-Machine State 新鲜、有限且位于物理速度包络内的动作，以及取消/异常/退出后的零命令。尚未完成现场
-标定的执行器位置上下界、`field_validated` 目标和可达域只产生明确 Warning，不阻断 Plan + Follow。
-当前可达域无效，因此 planner 继续按配置边界做全局 Bucket Tip 规划，并在轨迹中保留
-`disabled_by_operator` provenance。
+Gateway 只接受现有 `/planning/plan` 输出的完整、不可变且 SHA 匹配的
+`TrajectorySnapshot`。Orin 启动后保持 Idle；Panel 点击 `Plan + Follow DIG/DUMP` 后才在 Orin
+创建新的 Follow runtime。取消、TCP 断开、状态拒绝、完成、超时、异常和进程退出均由 Orin
+先经本地 Action Relay 提交零命令，再返回 Result。
+
+Panel Ready 的权威状态来自 Orin 5 Hz `status`，不是 PC 猜测。预期显示：
+
+```text
+motion_backend=orin_edge
+follow_control_mode=edge_onnx
+motion_gate_reason=ready
+```
+
+尚未完成现场标定的可达域在 commissioning 中继续使用
+`disabled_by_operator` provenance，不阻断本阶段全局 Bucket Tip 规划。远程接口已迁移
+`Follow`、`ExecuteDig` 和 `ExecuteDump`；固定动作只发送行为名称，速度闭环位于 Orin。
+`ReturnHome` 仍未迁移。`Full Mission` 已由 PC 调度现有的端侧
+`Follow`、`ExecuteDig` 和 `ExecuteDump`，不新增动作发送链路。
 
 所有几何、目标和可达域证据完成后，改用严格入口：
 
@@ -88,7 +112,9 @@ ros2 launch airy_excavator_bringup operator.launch.py \
 ```
 
 `live_production` 会重新强制执行器位置范围、`field_validated` Mission target 和
-`field_validated` execution workspace。旧 `live_control` profile 已删除，避免同一名称同时代表联调与生产。
+`field_validated` execution workspace。它目前仍是旧 PC Command Sink 路径，仅作为未完成迁移的
+历史入口；端侧 Follow 联调只能使用 `live_commissioning`，两种 control profile 禁止同时启动。
+旧 `live_control` profile 已删除，避免同一名称同时代表联调与生产。
 
 不要在这些命令前设置 DDS Domain 环境变量。当前仓库保留两类证据状态：
 
@@ -98,18 +124,54 @@ ros2 launch airy_excavator_bringup operator.launch.py \
   没有完整现场证据时不能成为 `field_validated`。
 
 `placeholder` 会锁定 Follow；当前仓库基线已经由操作者升级为 `rviz_adjusted`，因此会解锁
-commissioning Follow，但 production 仍只接受 `field_validated`。commissioning 下允许直接运行 candidate
-ExecuteDig/ExecuteDump，用于从任意新鲜真机状态逐段调整固定动作参数；它不要求 Bucket Tip 已在
-目标球内，也不检查尚未标定的固定动作起始包络。Full Mission 仍保持锁定，production 下仍要求
-目标和固定动作均为 `field_validated`。live motion profile 的 Panel → Tests 中提供 boom/stick/bucket 三轴 `Cable − / Cable +`
-Hold-to-Jog：按住才发送单轴命令，松开或 RViz 失焦立即取消；Panel 心跳丢失、Machine State 过期、
-安全状态关闭、到达绝对编码器端点余量或达到最长按住时间时，唯一 Command Sink 自动发送终态零命令。
-速度比例、周期、心跳、最长按住时间和端点余量只从 `runtime_bridge/config/runtime.json` 的
+commissioning Follow，但 production 仍只接受 `field_validated`。当前端侧
+`live_commissioning` 开放 `Plan + Follow DIG/DUMP` 和独立
+`ExecuteDig/ExecuteDump`。固定动作与 Follow 互斥，取消、失败、超时和完成均由 Orin
+先发送终态零命令。`ReturnHome` 要等对应 Orin 行为接口迁移后再启用。
+
+### 多挖掘点现场演示
+
+`mission/config/excavation_demo.json` 是演示程序的唯一入口。`dig_points` 按文件顺序执行，
+每个点都完成以下完整循环后才进入下一个点：
+
+```text
+Follow DIG → ExecuteDig → Follow DUMP → ExecuteDump
+```
+
+每个 `point_id` 必须唯一；全部坐标均为 `machine_root_ros` 右手系米制坐标。默认文件已经配置
+`dig_01`、`dig_02`、`dig_03` 三个现场演示点。调整或增加点位时，在 `dig_points` 数组中修改或
+复制对象，并更新 `point_id` 与 `position_m`。公共倾倒点只需修改 `dump_target`。live Operator
+会在 `Mission Targets` 中显示全部 dig 点和公共 dump 点；橙色标签包含各自的 `point_id`。
+
+演示程序由实时规划器在 PC Operator 启动时一次性加载。修改坐标后不需要同步到 Orin，也不需要
+重新编译，但必须重启 PC 的 `operator.launch.py`，使规划器与客户端读取同一文件 SHA。然后在
+第二个 PC 终端运行：
+
+```bash
+cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
+source /opt/ros/jazzy/setup.zsh
+source ros2_ws/install/setup.zsh
+
+ros2 run airy_mission_runtime run_excavation_demo \
+  --program /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar/mission/config/excavation_demo.json \
+  --repeat 1
+```
+
+`--repeat 2` 表示把整个点位列表重复两轮。脚本每次只提交一个 `/mission/run_cycle` Goal，
+等待 `FollowDig → Dig → FollowDump → Dump` 返回成功且确认静止后再提交下一个；任一步拒绝、
+失败、超时或取消都会停止演示，不会跳过失败点继续运动。
+
+旧 PC `udp_policy` backend 的 Panel → Tests 中提供 boom/stick/bucket 三轴
+`Action − / Action +` Hold-to-Jog：按住才发送单轴命令，松开或 RViz 失焦立即取消；
+它不是当前 Orin Edge commissioning 路径的一部分。Panel 心跳丢失、Machine State 过期、
+安全状态关闭或达到最长按住时间时，旧 PC Command Sink 自动发送终态零命令。
+速度比例、周期、心跳和最长按住时间只从 `runtime_bridge/config/runtime.json` 的
 `manual_jog` section 读取。当前 live 配置把单次硬上限固定为 `1000 ms`；Panel 会直接
 显示服务端的精确拒绝原因，并在 Result 中保留拉线长度 `before / after / delta`。Swing 因现场
 速度/限位尚未验证，不在该诊断入口开放。
 
-Follow supervision 的参数只来自 `runtime.json` 的 `follow_control`：Panel 点击 `Plan + Follow`
+旧 PC Follow supervision 的参数只来自 `runtime.json` 的 `follow_control`：在
+`live_production` 中 Panel 点击 `Plan + Follow`
 后会在操作期间自动维持 175 ms 租约心跳，操作结束后恢复按钮。ONNX 的四轴 `[-1,1]` 输出不做
 轴屏蔽或符号变换，只按 `machine_profile.json` 的正/负速度幅值转换为 m/s、rad/s；STM32 负责真机
 低层方向适配。Command Sink 仍以保持 ONNX 符号的完整方向性物理包络二次校验。Follow 持续到轨迹
@@ -120,10 +182,11 @@ Follow supervision 的参数只来自 `runtime.json` 的 `follow_control`：Pane
 `runtime_bridge/exports/latest_observation.json`。Panel 顶部会明确显示
 `LIVE / COMMISSIONING / READY` 或 `LIVE / PRODUCTION / READY`，避免把联调状态误认为生产准入。
 
-commissioning 真机验证可分别点击 `ExecuteDig`、`ExecuteDump` 调整固定动作，也可按
-`Plan + Follow DIG`、`ExecuteDig`、`Plan + Follow DUMP`、`ExecuteDump` 分段验证完整流程。
-全部现场证据完成并切换 production 后才使用 `Full Mission`。当前准入证据见
-`EvaluationReport/2026-07-17_unified_operator_live_shadow_and_control_gate.md`。
+当前端侧 commissioning 既可分段验证 `Plan + Follow DIG`、`ExecuteDig`、
+`Plan + Follow DUMP` 和 `ExecuteDump`，也可使用上述多点演示命令调用同一组 Action。
+Panel 的 `Full Mission` 按钮暂未作为 commissioning 入口开放。
+实现与离线证据见
+`EvaluationReport/2026-07-26_pc_plan_orin_edge_follow_implementation.md`。
 
 如果 OctoMap 未安装：
 
@@ -433,7 +496,7 @@ source ros2_ws/install/setup.zsh
 
 它会接收 Orin `machine_state_v1`，发布 `/joint_states` 给 FK，读取 `/bucket_tip_observation`，组装 38 维 observation 并运行 ONNX。该脚本是只读诊断入口，已经移除 `--enable-motion` 和 UDP sender，只记录/打印未发送的候选动作。真机动作只能通过统一 RViz Operator 的 Action Server 和唯一 Command Sink 发送。
 ONNX 输出在 PC 内部按训练语义视为 `[-1, 1]` 策略动作，候选动作会按 `shared/machine_profile.json` 反归一化为物理速度。其中 `boom/stick/bucket` 单位 m/s，`swing` 单位 rad/s。
-反归一化只选择动作正负方向对应的速度幅值，不改变四轴符号；`deploy_sign` 不参与 PC 策略动作换算。
+反归一化只选择动作正负方向对应的速度幅值，不改变四轴符号；低层方向适配由 STM32 负责。
 默认安全判定仍会计算：如果 `estop=true`、`sensor_valid=false`、`stm32_alive=false`、`control_enabled=false` 或存在 `fault_flags`，记录的候选动作会变为零，但任何情况下都不会由该诊断脚本发送。
 
 每个真正成功发往 Orin 的 UDP 动作都会异步追加到本地会话日志：
@@ -464,13 +527,16 @@ python3 runtime_bridge/apps/fixed_action_player.py dump
 上述独立脚本只计算和打印，已经彻底移除 `--enable-motion` 和 UDP sender；真机固定动作只能通过
 统一 RViz Operator 的 ExecuteDig/ExecuteDump Action 进入唯一 Command Sink。commissioning 允许
 candidate 动作通过这两个独立按钮执行；production 和 Full Mission 仍要求现场证据完整且动作
-profile 为 `field_validated`。当前 candidate 以 Unity ExcavationCycleTask 为基线，并把真机 Dig
-大臂/小臂行程减半：Dig 为 boom `+0.25`、bucket `-1.4`、boom/stick `-0.25/+0.1`，
-Dump 仍为 bucket `+1.4/-1.4`；
-相对目标像 Unity 一样截断到归一化关节范围，单段达到 tolerance 或 timeout 后进入下一段。
-Dig/Dump 伺服产生的四轴归一化速度与 ONNX 动作使用同一反归一化路径：PC 只按动作正负选择
-对应物理速度幅值，不应用 `deploy_sign` 或 `command_to_encoder_velocity_sign`，低层方向适配由
-STM32 负责。
+profile 为 `field_validated`；多点演示命令在 commissioning 中复用已开放的 candidate
+固定动作。当前 `fixed_action_profile.v2` 使用绝对归一化执行器目标，
+不再把 Follow 的结束误差叠加到固定动作上。Dig 根据现场液压系统更适合同步驱动的表现合并为
+两段：第一段将 boom/stick/bucket 送到 `+0.60/-0.15/+0.90`，第二段将三轴送到
+`-0.35/+0.15/-0.85`。Dump 将 bucket 依次送到 `+0.90/-0.85`。
+配置中未列出的轴在该段输出零命令；
+单段达到 tolerance 后进入下一段，超时则以零命令失败退出。
+Dig/Dump 伺服在 Orin 本地使用恒定 `0.6` 归一化速度，并与 ONNX 动作使用同一物理速度转换：
+Orin 只按动作正负选择对应物理速度幅值并保持 Unity 符号；PC 和 Orin 都不保存执行器方向取反
+属性，低层方向适配由 STM32 负责。
 
 每次只执行一个 ExecuteDig 或 ExecuteDump，等待动作结束和至少 1 秒日志落盘后，可把实际
 PC→Orin Action Journal 的最近一次运动会话导出为 Orin/STM32 回放 CSV：

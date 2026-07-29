@@ -10,6 +10,21 @@ from mission.trajectory_tracker import TrajectoryTracker
 
 
 class TrajectoryTrackerTest(unittest.TestCase):
+    def test_zero_dwell_advances_on_first_sample_inside_tolerance(self):
+        tracker = TrajectoryTracker(
+            waypoints=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),
+            tolerance_m=0.25,
+            dwell_s=0.0,
+            timeout_s=5.0,
+        )
+
+        tracker, update = tracker.advance((0.2, 0.0, 0.0), now_s=0.0)
+
+        self.assertTrue(update.advanced)
+        self.assertEqual(update.current_index, 1)
+        self.assertFalse(update.completed)
+        self.assertEqual(tracker.current_index, 1)
+
     def test_advances_waypoints_only_after_tip_dwells_inside_tolerance(self):
         tracker = TrajectoryTracker(
             waypoints=((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)),

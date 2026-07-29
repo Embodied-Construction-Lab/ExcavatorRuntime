@@ -3,6 +3,7 @@ import json
 import socket
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -28,12 +29,43 @@ from runtime_bridge.protocol import MachineStatePacket, decode_packet, encode_pa
 AIRY_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _init_isolated_ros_context(context) -> None:
+    namespace = f"/live_machine_behavior_test_{uuid.uuid4().hex}"
+    surfaces = (
+        "/bucket_tip_pose_machine_root_ros",
+        "/excavator/execute_dig",
+        "/excavator/execute_dump",
+        "/excavator/follow",
+        "/excavator/hold_to_jog",
+        "/excavator/jog_heartbeat",
+        "/excavator/operator_heartbeat",
+        "/joint_states",
+        "/mission/runtime_status",
+        "/planning/trajectory_snapshot",
+    )
+    arguments = ["--ros-args"]
+    for surface in surfaces:
+        arguments.extend(["-r", f"{surface}:={namespace}{surface}"])
+    rclpy.init(args=arguments, context=context)
+
+
 def _free_udp_port():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
     sock.close()
     return port
+
+
+def _stub_policy(monkeypatch, action=(0.1, -0.1, 0.1, 0.1)):
+    class ConstantPolicy:
+        def run(self, _observation):
+            return list(action)
+
+    monkeypatch.setattr(
+        "runtime_bridge.apps.live_machine_behavior_server.OnnxPolicy",
+        lambda _model_path: ConstantPolicy(),
+    )
 
 
 def _wait_future(future, timeout_s=5.0):
@@ -77,6 +109,11 @@ def _write_fixture(
         )
     )
     profile["machine_profile_sha256"] = machine_profile_sha256
+    urdf_path = AIRY_ROOT / "kinematics/waji_description/urdf/waji.urdf"
+    profile["urdf_sha256"] = hashlib.sha256(urdf_path.read_bytes()).hexdigest()
+    configured_onnx = Path(config["artifacts"]["onnx"])
+    if not configured_onnx.is_absolute():
+        configured_onnx = (AIRY_ROOT / configured_onnx).resolve()
     config["network"].update(
         {
             "state_bind_host": "127.0.0.1",
@@ -88,11 +125,9 @@ def _write_fixture(
     )
     config["artifacts"].update(
         {
-            "onnx": str(
-                (AIRY_ROOT.parent / "RLExcavator/Assets/AIModels/ExcavatorTrajectory-7496592.onnx")
-            ),
+            "onnx": str(configured_onnx),
             "machine_profile": str(machine_profile_path),
-            "urdf": str(AIRY_ROOT / "kinematics/waji_description/urdf/waji.urdf"),
+            "urdf": str(urdf_path),
             "waypoint_slice": str(tmp_path / "unused-waypoints.json"),
             "latest_observation": str(tmp_path / "unused-observation.json"),
         }
@@ -125,18 +160,14 @@ def _write_fixture(
                 {
                     "step_id": "dig_test_boom",
                     "label": "dig_test_boom",
-                    "delta_by_actuator": {
-                        "boom": 0.02, "stick": 0.0, "bucket": 0.0, "swing": 0.0
-                    },
+                    "target_normalized_position": {"boom": 0.02},
                 }
             ],
             "dump": [
                 {
                     "step_id": "dump_test_bucket",
                     "label": "dump_test_bucket",
-                    "delta_by_actuator": {
-                        "boom": 0.0, "stick": 0.0, "bucket": 0.02, "swing": 0.0
-                    },
+                    "target_normalized_position": {"bucket": 0.02},
                 }
             ],
         }
@@ -222,7 +253,14 @@ def _follow_goal(node, mission):
     snapshot.input_source = "live"
     snapshot.map_source = "live_local_map"
     snapshot.clock_mode = "ros_clock"
-    snapshot.waypoints = [Point(x=0.6, y=0.3, z=0.2)]
+    target = mission.targets["dig"]
+    snapshot.waypoints = [
+        Point(
+            x=target.position_m[0],
+            y=target.position_m[1],
+            z=target.position_m[2],
+        )
+    ]
     snapshot.waypoint_tolerance_m = 0.03
     snapshot.waypoint_dwell_s = 0.05
     snapshot.tracking_timeout_s = 2.0
@@ -257,7 +295,10 @@ def _jog_goal(session_id, actuator="boom", direction=1):
     return goal
 
 
-def test_localhost_hold_to_jog_requires_heartbeat_and_release_ends_with_zero(tmp_path):
+def test_localhost_hold_to_jog_requires_heartbeat_and_release_ends_with_zero(
+    tmp_path, monkeypatch
+):
+    _stub_policy(monkeypatch)
     config_path, mission_path, state_port, action_port = _write_fixture(
         tmp_path, deploy_observation=True, field_mission=False
     )
@@ -287,7 +328,7 @@ def test_localhost_hold_to_jog_requires_heartbeat_and_release_ends_with_zero(tmp
             time.sleep(0.05)
 
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="production",
         config_path=config_path,
@@ -353,7 +394,7 @@ def test_localhost_hold_to_jog_requires_heartbeat_and_release_ends_with_zero(tmp
         assert wrapped.result.final_position_m == pytest.approx(positions["boom"])
         assert wrapped.result.position_delta_m == pytest.approx(0.0)
         jog_packets = received[start_index:]
-        assert any(packet.action[0] < 0.0 for packet in jog_packets)
+        assert any(packet.action[0] > 0.0 for packet in jog_packets)
         assert all(
             packet.action[1:] == [0.0, 0.0, 0.0]
             for packet in jog_packets
@@ -376,7 +417,7 @@ def test_localhost_hold_to_jog_requires_heartbeat_and_release_ends_with_zero(tmp
         assert timeout_result.status == GoalStatus.STATUS_ABORTED
         assert timeout_result.result.reason_code == "HEARTBEAT_TIMEOUT"
         assert timeout_result.result.quiescence_confirmed
-        assert any(packet.action[1] > 0.0 for packet in received[timeout_start:])
+        assert any(packet.action[1] < 0.0 for packet in received[timeout_start:])
         assert received[-1].action == [0.0, 0.0, 0.0, 0.0]
     finally:
         heartbeat_stop.set()
@@ -392,15 +433,23 @@ def test_localhost_hold_to_jog_requires_heartbeat_and_release_ends_with_zero(tmp
         action_socket.close()
 
 
-def test_localhost_follow_uses_bounded_udp_and_ends_with_zero(tmp_path):
+def test_localhost_follow_recovers_from_one_missing_tip_and_ends_with_zero(
+    tmp_path, monkeypatch
+):
+    _stub_policy(monkeypatch)
     config_path, mission_path, state_port, action_port = _write_fixture(tmp_path)
+    dig_target = load_mission(mission_path).targets["dig"].position_m
     action_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     action_socket.bind(("127.0.0.1", action_port))
     action_socket.settimeout(0.1)
     state_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     stop = threading.Event()
+    heartbeat_stop = threading.Event()
+    pause_states = threading.Event()
+    drop_next_tip = threading.Event()
+    drop_all_tips = threading.Event()
+    dropped_tip = threading.Event()
     received = []
-
     def receive_actions():
         while not stop.is_set():
             try:
@@ -412,12 +461,15 @@ def test_localhost_follow_uses_bounded_udp_and_ends_with_zero(tmp_path):
     def send_states():
         seq = 1
         while not stop.is_set():
+            if pause_states.is_set():
+                time.sleep(0.01)
+                continue
             state_socket.sendto(encode_packet(_state_packet(seq)), ("127.0.0.1", state_port))
             seq += 1
             time.sleep(0.05)
 
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="production",
         config_path=config_path,
@@ -434,10 +486,20 @@ def test_localhost_follow_uses_bounded_udp_and_ends_with_zero(tmp_path):
     )
 
     def relay_tip(message: JointState):
+        if drop_all_tips.is_set():
+            return
+        if drop_next_tip.is_set():
+            drop_next_tip.clear()
+            dropped_tip.set()
+            return
         pose = PoseStamped()
         pose.header = message.header
         pose.header.frame_id = "machine_root_ros"
-        pose.pose.position = Point(x=0.6, y=0.3, z=0.2)
+        pose.pose.position = Point(
+            x=dig_target[0],
+            y=dig_target[1],
+            z=dig_target[2],
+        )
         pose.pose.orientation.w = 1.0
         tip_publisher.publish(pose)
 
@@ -452,6 +514,16 @@ def test_localhost_follow_uses_bounded_udp_and_ends_with_zero(tmp_path):
     receive_thread.start()
     state_thread.start()
     client = ActionClient(client_node, Follow, "/excavator/follow")
+
+    def publish_heartbeats(session_id):
+        while not heartbeat_stop.is_set():
+            heartbeat = OperatorHeartbeat()
+            heartbeat.header.stamp = client_node.get_clock().now().to_msg()
+            heartbeat.behavior = "Follow"
+            heartbeat.session_id = session_id
+            heartbeat_publisher.publish(heartbeat)
+            time.sleep(0.05)
+
     try:
         assert client.wait_for_server(timeout_sec=2.0)
         deadline = time.monotonic() + 2.0
@@ -476,29 +548,67 @@ def test_localhost_follow_uses_bounded_udp_and_ends_with_zero(tmp_path):
             TrajectorySnapshot, "/planning/trajectory_snapshot", latched
         )
         plan_publisher.publish(valid_goal.trajectory)
-        for _ in range(3):
-            heartbeat = OperatorHeartbeat()
-            heartbeat.header.stamp = client_node.get_clock().now().to_msg()
-            heartbeat.behavior = "Follow"
-            heartbeat.session_id = valid_goal.trajectory.trajectory_id
-            heartbeat_publisher.publish(heartbeat)
-            time.sleep(0.05)
+        heartbeat_thread = threading.Thread(
+            target=publish_heartbeats,
+            args=(valid_goal.trajectory.trajectory_id,),
+            daemon=True,
+        )
+        heartbeat_thread.start()
+        time.sleep(0.12)
+        pause_states.set()
+        time.sleep(0.1)
         handle = _wait_future(client.send_goal_async(valid_goal))
         assert handle.accepted
+        start_index = len(received)
+        drop_next_tip.set()
+        pause_states.clear()
         wrapped = _wait_future(handle.get_result_async())
+        assert dropped_tip.is_set()
         assert wrapped.status == GoalStatus.STATUS_SUCCEEDED
         assert wrapped.result.reason_code == "SUCCEEDED"
         assert wrapped.result.quiescence_confirmed
         assert wrapped.result.action_datagrams >= 2
         assert received
         assert received[-1].action == [0.0, 0.0, 0.0, 0.0]
+        goal_packets = received[start_index:]
+        first_nonzero = next(
+            index for index, packet in enumerate(goal_packets) if any(packet.action)
+        )
+        assert any(
+            packet.action == [0.0, 0.0, 0.0, 0.0]
+            for packet in goal_packets[:first_nonzero]
+        )
         limits = (0.0351, 0.0444, 0.0419, 0.6)
         assert all(
             abs(value) <= limit + 1e-12
             for packet in received
             for value, limit in zip(packet.action, limits, strict=True)
         )
+
+        pause_states.set()
+        time.sleep(0.1)
+        plan_publisher.publish(valid_goal.trajectory)
+        stalled_handle = _wait_future(client.send_goal_async(valid_goal))
+        assert stalled_handle.accepted
+        stalled_start_index = len(received)
+        drop_all_tips.set()
+        stalled_started = time.monotonic()
+        pause_states.clear()
+        stalled = _wait_future(stalled_handle.get_result_async())
+        stalled_elapsed_s = time.monotonic() - stalled_started
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=1.0)
+        assert stalled.status == GoalStatus.STATUS_ABORTED
+        assert stalled.result.reason_code == "STATE_TIP_NOT_SYNCHRONIZED"
+        assert stalled_elapsed_s >= 0.45
+        assert received[stalled_start_index:]
+        assert all(
+            packet.action == [0.0, 0.0, 0.0, 0.0]
+            for packet in received[stalled_start_index:]
+        )
     finally:
+        heartbeat_stop.set()
+        pause_states.clear()
         stop.set()
         state_thread.join(timeout=1.0)
         executor.shutdown(timeout_sec=1.0)
@@ -552,7 +662,7 @@ def test_localhost_follow_preserves_policy_output_until_supervision_is_lost(
         lambda _model_path: policy,
     )
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="production",
         config_path=config_path,
@@ -674,7 +784,10 @@ def test_localhost_follow_preserves_policy_output_until_supervision_is_lost(
         action_socket.close()
 
 
-def test_commissioning_execute_dig_and_dump_accept_candidate_actions_and_end_with_zero(tmp_path):
+def test_commissioning_execute_dig_and_dump_accept_candidate_actions_and_end_with_zero(
+    tmp_path, monkeypatch
+):
+    _stub_policy(monkeypatch)
     config_path, mission_path, state_port, action_port = _write_fixture(
         tmp_path, field_actions=False, field_mission=False, small_actions=True
     )
@@ -699,10 +812,11 @@ def test_commissioning_execute_dig_and_dump_accept_candidate_actions_and_end_wit
             if any(abs(component) > 0.0 for component in packet.action):
                 first_action_seen.set()
             with lock:
-                    for index, name in enumerate(("boom", "stick", "bucket")):
-                        # This fixture removes deploy_position_observation, so it
-                        # models the Unity/training position convention directly.
-                        positions[name] += packet.action[index] * 0.05
+                for index, name in enumerate(("boom", "stick", "bucket")):
+                    # Orin/STM32 feedback retains the raw sensor direction.
+                    # The PC deploy_observation_sign adapter maps it back to the
+                    # Unity/training convention used by the fixed-action loop.
+                    positions[name] -= packet.action[index] * 0.05
 
     def send_states():
         seq = 1
@@ -718,7 +832,7 @@ def test_commissioning_execute_dig_and_dump_accept_candidate_actions_and_end_wit
             time.sleep(0.05)
 
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="commissioning",
         config_path=config_path,

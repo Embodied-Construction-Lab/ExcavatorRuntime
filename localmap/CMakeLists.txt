@@ -41,6 +41,10 @@ if(BUILD_TESTING)
     tests/test_replay_clock.py
     TIMEOUT 15
   )
+  ament_add_pytest_test(
+    test_mission_target_registry
+    tests/test_mission_target_registry.py
+  )
 endif()
 
 ament_package()

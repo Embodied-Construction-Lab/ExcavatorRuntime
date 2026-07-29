@@ -201,14 +201,14 @@ ExcavationPanel::ExcavationPanel(QWidget * parent)
   const std::array<std::string, 3> jog_actuators{{"boom", "stick", "bucket"}};
   for (std::size_t index = 0; index < jog_actuators.size(); ++index) {
     const auto & actuator = jog_actuators[index];
-    auto * negative = new QPushButton("Cable −", manual_jog_box);
-    auto * positive = new QPushButton("Cable +", manual_jog_box);
+    auto * negative = new QPushButton("Action −", manual_jog_box);
+    auto * positive = new QPushButton("Action +", manual_jog_box);
     negative->setObjectName(QString("manual_jog_%1_negative").arg(
         QString::fromStdString(actuator)));
     positive->setObjectName(QString("manual_jog_%1_positive").arg(
         QString::fromStdString(actuator)));
-    negative->setToolTip("Hold to decrease the STM32 absolute cable length; release stops");
-    positive->setToolTip("Hold to increase the STM32 absolute cable length; release stops");
+    negative->setToolTip("Hold to send a negative action; release stops");
+    positive->setToolTip("Hold to send a positive action; release stops");
     manual_jog_buttons_[index * 2] = negative;
     manual_jog_buttons_[index * 2 + 1] = positive;
     manual_jog_layout->addWidget(
@@ -390,7 +390,7 @@ void ExcavationPanel::startManualJog(
     jog_heartbeat_active_ = true;
     cancel_requested_ = false;
     operation_text_ = "Holding manual jog: " + actuator +
-      (direction > 0 ? " cable +" : " cable -");
+      (direction > 0 ? " action +" : " action -");
     feedback_text_ = "Waiting for HoldToJog goal response";
     result_text_ = "Release the button to stop";
   }
@@ -908,7 +908,9 @@ void ExcavationPanel::sendExecute(const std::string & phase)
           finishOperationLocked("ExecuteDig CANCELLED");
         } else {
           failOperationLocked(
-            wrapped.result ? "ExecuteDig failed: " + wrapped.result->reason_code :
+            wrapped.result ?
+            "ExecuteDig failed: " + wrapped.result->reason_code + " / " +
+            wrapped.result->message :
             "ExecuteDig failed without Result");
         }
       };
@@ -966,11 +968,13 @@ void ExcavationPanel::sendExecute(const std::string & phase)
         wrapped.result->quiescence_confirmed)
       {
         finishOperationLocked("ExecuteDump CANCELLED");
-      } else {
-        failOperationLocked(
-          wrapped.result ? "ExecuteDump failed: " + wrapped.result->reason_code :
-          "ExecuteDump failed without Result");
-      }
+    } else {
+      failOperationLocked(
+        wrapped.result ?
+        "ExecuteDump failed: " + wrapped.result->reason_code + " / " +
+        wrapped.result->message :
+        "ExecuteDump failed without Result");
+    }
     };
   execute_dump_client_->async_send_goal(goal, options);
 }
@@ -1267,8 +1271,12 @@ void ExcavationPanel::refreshView()
   refreshManualJogControls(view);
   cancel_button_->setEnabled(view.cancel_enabled);
   safety_label_->setText(QString::fromStdString(view.safety_text));
+  const bool safety_ready =
+    view.safety_text.rfind("LOCKED", 0) != 0 &&
+    view.safety_text.size() >= 8 &&
+    view.safety_text.compare(view.safety_text.size() - 8, 8, " / READY") == 0;
   safety_label_->setStyleSheet(
-    view.safety_text.find("READY") != std::string::npos ?
+    safety_ready ?
     "font-weight: bold; color: #66dd88;" : "font-weight: bold; color: #ff6666;");
   runtime_label_->setText(QString::fromStdString(
       runtime.input_source + " / " + runtime.execution_mode + " / " +

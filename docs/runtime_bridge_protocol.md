@@ -94,7 +94,7 @@ PC -> Orin action: 18082/udp
 - 为兼容 Orin 端解析，`action_type` 字段必须保持 `normalized_velocity_command`。
 - `pc_policy_bridge.py` 是只读 ONNX 诊断入口：输出仍是 `[-1, 1]` 策略动作，并计算按 `shared/machine_profile.json` 反归一化后的候选物理速度，但不包含 UDP sender。真机发送只允许通过统一 Operator 的 Action Server 和唯一 Command Sink。
 - 当前 `action` 顺序是 `boom, stick, bucket, swing`；前三个单位 m/s，`swing` 单位 rad/s。这里字段名沿用旧协议，数值语义以本条为准。
-- PC 反归一化只按 ONNX 输出正负选择对应速度幅值，四轴符号必须保持不变；真机低层方向换算由 STM32 负责。`deploy_sign` 不得用于改变策略动作符号。
+- PC 反归一化只按 ONNX 输出正负选择对应速度幅值，四轴符号必须保持不变；真机低层方向换算由 STM32 负责。
 - Orin 必须检查 `valid_for_ms` 和本地接收时间，超时动作应丢弃并置零。
 - Orin 必须检查 `estop=false`、`control_enabled=true`、`sensor_valid=true`、`stm32_alive=true` 后才能转发动作。
 - Orin 不应再把 `action` 当作 `[-1, 1]` 归一化量解释。

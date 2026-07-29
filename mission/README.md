@@ -1,10 +1,15 @@
-# Excavation Mission：第一阶段 shadow/replay
+# Excavation Mission
 
 `config/excavation_cycle.json` 是挖掘点与倾倒点的唯一文件入口。两个 `position_m`
 都使用 ROS 右手坐标 `machine_root_ros`：`+X` 前、`+Y` 左、`+Z` 上，单位为米。
 
-当前 `target_status` 是 `placeholder`，只能用于 RViz 调整和无动作验证。不要把占位坐标
-视为已标定坐标。
+当前现场配置使用 `rviz_adjusted`，可用于 `live_commissioning`；它不等于
+`field_validated`，不能用于 production 准入。
+
+`config/excavation_demo.json` 是多点演示入口。它保存有序 `dig_points` 和一个公共
+`dump_target`，PC 依次为每个挖掘点提交一个完整
+`Follow DIG → ExecuteDig → Follow DUMP → ExecuteDump` 循环。文件在 Operator 启动时加载，
+修改后必须重启 Operator；点位配置不需要同步到 Orin。
 
 ## RViz 中调整坐标
 
@@ -86,7 +91,8 @@ Panel 应显示 `FIXTURE / SHADOW / READY`，且 `action_datagrams=0`。当前�
 - `Plan + Follow DIG`、`Plan + Follow DUMP`：把本次 Plan Result 直接交给 Follow；
 - `Return Home`：观察滑块是否进入所选命名位姿；
 - `Cancel Panel Operation`：只取消该 Panel 自己提交的 Goal，不是急停；
-- `ExecuteDig`、`ExecuteDump`、`Full Mission`：契约未实现，按钮按设计禁用。
+- 离线 fixture 中的 `ExecuteDig`、`ExecuteDump`、`Full Mission` 不发送真机动作；
+  端侧 commissioning 使用 Orin Action Gateway，多点演示由命令行客户端顺序提交。
 
 Panel 使用三个标签页：`Actions` 放 Mission Action 和结果，`Logs` 放节点告警历史，`Tests`
 放四关节测试滑块。安全状态栏始终位于标签页外。Tests 以 0.01 rad 分辨率、10 Hz 发布

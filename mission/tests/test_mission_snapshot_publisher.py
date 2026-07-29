@@ -29,6 +29,18 @@ def test_mission_publisher_accepts_ros_launch_arguments():
     assert args.rate_hz == 4.0
 
 
+def test_mission_publisher_accepts_an_explicit_demo_program():
+    args = parse_cli_args(
+        [
+            "mission_snapshot_publisher",
+            "--demo",
+            str(Path(__file__).resolve().parents[1] / "config/excavation_demo.json"),
+        ]
+    )
+
+    assert args.demo.name == "excavation_demo.json"
+
+
 def test_mission_publisher_exposes_typed_dig_and_dump_snapshots():
     rclpy.init()
     publisher = MissionMarkerPublisher(

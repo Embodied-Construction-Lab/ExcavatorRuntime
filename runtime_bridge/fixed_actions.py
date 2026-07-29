@@ -1,7 +1,7 @@
 """固定挖掘/倾倒动作执行器。
 
-参考 Unity 的 ExcavationCycleTask：先由外部 planner/策略把 bucket tip 送到目标点，
-再用固定的归一化关节增量序列完成挖掘或倾倒。这里不做路径规划，只根据 Orin
+先由外部 planner/策略把 bucket tip 送到目标点，再用固定的归一化执行器目标
+完成挖掘或倾倒。这里不做路径规划，只根据 Orin
 回传的 actuator_state 追踪固定动作段。
 """
 
@@ -16,11 +16,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Sequence
 
-from runtime_bridge.observation import normalize_position
+from runtime_bridge.observation import normalize_position, normalized_command_deadzones
 from runtime_bridge.protocol import ACTION_ORDER, MachineStatePacket, PolicyActionPacket, make_zero_action, now_ms
 
 
-FIXED_ACTION_PROFILE_SCHEMA = "fixed_action_profile.v1"
+FIXED_ACTION_PROFILE_SCHEMA = "fixed_action_profile.v2"
 DEFAULT_WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 _ACTION_CONTRACT_FIELDS = (
     "profile_id",
@@ -40,11 +40,16 @@ class FixedActionProfileError(ValueError):
 
 @dataclass(frozen=True)
 class FixedActionStep:
-    """固定动作中的一段相对归一化关节位移。"""
+    """固定动作中的一段绝对归一化执行器目标。None 表示本段不控制该轴。"""
 
     step_id: str
     label: str
-    delta_normalized_qpos: tuple[float, float, float, float]
+    target_normalized_qpos: tuple[
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+    ]
 
 
 @dataclass(frozen=True)
@@ -60,7 +65,6 @@ class FixedActionController:
 @dataclass(frozen=True)
 class FixedActionStartEnvelope:
     normalized_actuator_position: Mapping[str, tuple[float, float]]
-    bucket_pitch_deg: tuple[float, float]
     swing_rad: tuple[float, float]
 
 
@@ -96,8 +100,6 @@ class FixedActionProfile:
         name: str,
         state: MachineStatePacket,
         machine_profile: Mapping[str, Any],
-        *,
-        bucket_pitch_rad: float,
     ) -> FixedActionStartDecision:
         try:
             envelope = self.start_envelopes[name]
@@ -110,13 +112,13 @@ class FixedActionProfile:
                 return FixedActionStartDecision(
                     False, f"{name}_{actuator}_outside_start_envelope"
                 )
-        pitch_deg = math.degrees(float(bucket_pitch_rad))
-        if not math.isfinite(pitch_deg) or not _inside(
-            pitch_deg, envelope.bucket_pitch_deg
-        ):
-            return FixedActionStartDecision(False, f"{name}_bucket_pitch_outside_start_envelope")
         swing_rad = float(state.actuator_state["swing"]["position_rad"])
-        if not math.isfinite(swing_rad) or not _inside(swing_rad, envelope.swing_rad):
+        if not math.isfinite(swing_rad):
+            return FixedActionStartDecision(False, f"{name}_swing_not_finite")
+        if _position_range_is_bounded(machine_profile, "swing") and not _inside(
+            swing_rad,
+            envelope.swing_rad,
+        ):
             return FixedActionStartDecision(False, f"{name}_swing_outside_start_envelope")
         return FixedActionStartDecision(True, "fixed_action_start_valid")
 
@@ -217,12 +219,6 @@ def load_fixed_action_profile(
     parsed_actions = {
         name: _parse_action_steps(name, actions[name]) for name in ("dig", "dump")
     }
-    if any(
-        abs(step.delta_normalized_qpos[3]) > 1e-9
-        for steps in parsed_actions.values()
-        for step in steps
-    ):
-        raise FixedActionProfileError("fixed_action_profile.v1 不支持非零 swing 增量")
     return FixedActionProfile(
         profile_id=profile_id,
         machine_id=machine_id,
@@ -258,6 +254,27 @@ def fixed_action_contract_sha256(profile: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _position_range_is_bounded(
+    machine_profile: Mapping[str, Any],
+    actuator: str,
+) -> bool:
+    actuator_profile = machine_profile.get("actuators", {}).get(actuator, {})
+    required = actuator_profile.get("range_enabled_required")
+    if isinstance(required, bool):
+        return required
+    configured_range = actuator_profile.get("range")
+    return (
+        isinstance(configured_range, (list, tuple))
+        and len(configured_range) == 2
+        and all(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            for value in configured_range
+        )
+    )
+
+
 def _require_fields(name: str, value: object, expected: set[str]) -> None:
     if not isinstance(value, dict):
         raise FixedActionProfileError(f"{name} 必须是 JSON object")
@@ -288,30 +305,44 @@ def _parse_action_steps(name: str, value: object) -> tuple[FixedActionStep, ...]
     step_ids: set[str] = set()
     for index, item in enumerate(value):
         prefix = f"actions.{name}[{index}]"
-        _require_fields(prefix, item, {"step_id", "label", "delta_by_actuator"})
+        _require_fields(
+            prefix,
+            item,
+            {"step_id", "label", "target_normalized_position"},
+        )
         step_id = _non_empty_string(f"{prefix}.step_id", item["step_id"])
         if step_id in step_ids:
             raise FixedActionProfileError(f"actions.{name} 存在重复 step_id: {step_id}")
         step_ids.add(step_id)
         label = _non_empty_string(f"{prefix}.label", item["label"])
-        delta_by_actuator = item["delta_by_actuator"]
-        _require_fields(
-            f"{prefix}.delta_by_actuator", delta_by_actuator, set(ACTION_ORDER)
-        )
-        delta = [delta_by_actuator[actuator] for actuator in ACTION_ORDER]
-        if any(
-            isinstance(component, bool)
-            or not isinstance(component, int | float)
-            or not math.isfinite(component)
-            or abs(component) > 2.0
-            for component in delta
-        ):
+        targets = item["target_normalized_position"]
+        if not isinstance(targets, Mapping):
             raise FixedActionProfileError(
-                f"{prefix}.delta_by_actuator 必须是 [-2,2] 内有限数"
+                f"{prefix}.target_normalized_position 必须是 JSON object"
             )
-        converted = tuple(float(component) for component in delta)
-        if not any(abs(component) > 1e-9 for component in converted):
-            raise FixedActionProfileError(f"{prefix} 不得是全零动作段")
+        if not targets or not set(targets).issubset(set(ACTION_ORDER)):
+            raise FixedActionProfileError(
+                f"{prefix}.target_normalized_position 包含无效执行器"
+            )
+        if "swing" in targets:
+            raise FixedActionProfileError(
+                f"{prefix}.target_normalized_position 暂不支持 swing"
+            )
+        converted = tuple(
+            (
+                _finite_number(
+                    f"{prefix}.target_normalized_position.{actuator}",
+                    targets[actuator],
+                )
+                if actuator in targets
+                else None
+            )
+            for actuator in ACTION_ORDER
+        )
+        if any(component is not None and abs(component) > 1.0 for component in converted):
+            raise FixedActionProfileError(
+                f"{prefix}.target_normalized_position 必须在 [-1,1] 内"
+            )
         parsed.append(FixedActionStep(step_id, label, converted))
     return tuple(parsed)
 
@@ -350,7 +381,7 @@ def _parse_start_envelopes(value: object) -> dict[str, FixedActionStartEnvelope]
         _require_fields(
             f"start_envelopes.{phase}",
             entry,
-            {"normalized_actuator_position", "bucket_pitch_deg", "swing_rad"},
+            {"normalized_actuator_position", "swing_rad"},
         )
         normalized = entry["normalized_actuator_position"]
         _require_fields(
@@ -369,12 +400,6 @@ def _parse_start_envelopes(value: object) -> dict[str, FixedActionStartEnvelope]
         }
         parsed[phase] = FixedActionStartEnvelope(
             normalized_actuator_position=MappingProxyType(ranges),
-            bucket_pitch_deg=_number_range(
-                f"start_envelopes.{phase}.bucket_pitch_deg",
-                entry["bucket_pitch_deg"],
-                minimum=-180.0,
-                maximum=180.0,
-            ),
             swing_rad=_number_range(
                 f"start_envelopes.{phase}.swing_rad",
                 entry["swing_rad"],
@@ -490,6 +515,13 @@ def physical_velocity_action_from_normalized(action: Sequence[float], machine_pr
     for name, value in zip(ACTION_ORDER, action, strict=True):
         normalized = clamp(float(value), -1.0, 1.0)
         actuator = actuators[name]
+        positive_deadzone, negative_deadzone = normalized_command_deadzones(
+            actuator, actuator_name=name
+        )
+        deadzone = positive_deadzone if normalized >= 0.0 else negative_deadzone
+        if abs(normalized) <= deadzone:
+            result.append(0.0)
+            continue
         speed_limit = (
             float(actuator["max_speed_positive"])
             if normalized >= 0.0
@@ -513,7 +545,6 @@ class FixedActionExecutor:
         tolerance: float = 0.03,
         step_timeout_s: float = 3.0,
         hold_s: float = 0.15,
-        lock_zero_axes: bool = True,
     ) -> None:
         if not steps:
             raise ValueError("固定动作序列不能为空")
@@ -525,12 +556,11 @@ class FixedActionExecutor:
         self.tolerance = max(float(tolerance), 0.001)
         self.step_timeout_s = max(float(step_timeout_s), 0.1)
         self.hold_s = max(float(hold_s), 0.0)
-        self.lock_zero_axes = bool(lock_zero_axes)
         self.step_index = 0
         self.step_started_at_s: float | None = None
         self.hold_until_s: float | None = None
-        self.step_start_qpos: tuple[float, float, float, float] | None = None
         self.failed_reason = ""
+        self.latched_axes = (False, False, False, False)
 
     @property
     def done(self) -> bool:
@@ -556,29 +586,39 @@ class FixedActionExecutor:
         current_qpos = current_normalized_joint_pose(state, self.machine_profile)
         if self.step_started_at_s is None:
             self.step_started_at_s = now_s
-            self.step_start_qpos = current_qpos
 
         step = self.steps[self.step_index]
-        start_qpos = self.step_start_qpos or current_qpos
-        raw_target_qpos = tuple(
-            start_qpos[i] + step.delta_normalized_qpos[i] for i in range(4)
+        raw_error = tuple(
+            (
+                0.0
+                if step.target_normalized_qpos[index] is None
+                else float(step.target_normalized_qpos[index]) - current_qpos[index]
+            )
+            for index in range(4)
         )
-        target_qpos = tuple(clamp(value) for value in raw_target_qpos)
-        error = tuple(target_qpos[i] - current_qpos[i] for i in range(4))
-        if self.lock_zero_axes:
-            # 关键：与 Unity 一致，未参与该段动作的轴不追误差，避免无关关节抖动。
-            error = tuple(0.0 if abs(step.delta_normalized_qpos[i]) <= 1e-4 else error[i] for i in range(4))
-        max_error = max(abs(value) for value in error)
         timed_out = (now_s - self.step_started_at_s) >= self.step_timeout_s
         if timed_out:
             self.failed_reason = "STEP_TIMEOUT"
             return make_zero_action(seq, valid_for_ms), self._status(
                 "failed",
-                max_error,
+                max(abs(value) for value in raw_error),
                 False,
                 failed=True,
                 reason_code=self.failed_reason,
             )
+        self.latched_axes = tuple(
+            was_latched
+            or (
+                step.target_normalized_qpos[index] is not None
+                and abs(raw_error[index]) <= self.tolerance
+            )
+            for index, was_latched in enumerate(self.latched_axes)
+        )
+        error = tuple(
+            0.0 if self.latched_axes[index] else raw_error[index]
+            for index in range(4)
+        )
+        max_error = max(abs(value) for value in error)
         if max_error <= self.tolerance:
             self.hold_until_s = now_s + self.hold_s
             return make_zero_action(seq, valid_for_ms), self._status("hold", max_error, False)
@@ -601,7 +641,7 @@ class FixedActionExecutor:
         self.step_index += 1
         self.step_started_at_s = None
         self.hold_until_s = None
-        self.step_start_qpos = None
+        self.latched_axes = (False, False, False, False)
 
     def _servo_axis(self, error: float) -> float:
         """把归一化位置误差转换为归一化速度动作。"""

@@ -1,10 +1,13 @@
+import json
 import math
 import unittest
+from pathlib import Path
 
 from runtime_bridge.observation import (
     BucketTipObservation,
     ObservationBuilder,
     normalize_position,
+    normalize_velocity,
     position_observation_range,
 )
 from runtime_bridge.protocol import MachineStatePacket, decode_packet, encode_packet
@@ -62,6 +65,70 @@ def sample_state(control_enabled=False):
 
 
 class ObservationBuilderTest(unittest.TestCase):
+    def test_shared_profile_uses_verified_true_machine_cylinder_ranges(self):
+        workspace_root = Path(__file__).resolve().parents[3]
+        profile = json.loads(
+            (workspace_root / "shared" / "machine_profile.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        actuators = profile["actuators"]
+
+        self.assertEqual(position_observation_range(actuators["boom"]), (0.070, 0.190))
+        self.assertEqual(position_observation_range(actuators["stick"]), (0.060, 0.210))
+        self.assertEqual(position_observation_range(actuators["bucket"]), (0.060, 0.170))
+
+    def test_true_machine_cylinder_feedback_maps_to_unity_observation_direction(self):
+        workspace_root = Path(__file__).resolve().parents[3]
+        profile = json.loads(
+            (workspace_root / "shared" / "machine_profile.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        actuators = profile["actuators"]
+
+        for name in ("boom", "stick", "bucket"):
+            actuator = actuators[name]
+            lower, upper = position_observation_range(actuator)
+            self.assertEqual(normalize_position(upper, actuator), -1.0)
+            self.assertEqual(normalize_position(lower, actuator), 1.0)
+            self.assertLess(normalize_velocity(0.01, actuator), 0.0)
+
+        self.assertLess(normalize_velocity(0.01, actuators["swing"]), 0.0)
+
+    def test_rejects_invalid_deploy_observation_sign(self):
+        actuator = {
+            "range": [-0.1, 0.1],
+            "sign": 1,
+            "deploy_observation_sign": 0,
+            "max_speed_positive": 0.04,
+            "max_speed_negative": 0.02,
+            "deploy_position_observation": {
+                "source": "stm32_absolute_cable_encoder",
+                "range": [0.07, 0.19],
+                "status": "firmware_safety_bounds",
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "deploy_observation_sign"):
+            normalize_position(0.1, actuator)
+
+    def test_swing_feedback_angle_and_velocity_are_adapted_before_onnx(self):
+        profile = sample_profile()
+        profile["actuators"]["swing"]["deploy_observation_sign"] = -1
+        builder = ObservationBuilder(profile, task_mode="MoveToDig")
+
+        observation = builder.build(
+            sample_state(),
+            BucketTipObservation((0.0, 0.0, 0.0), 0.0, stamp_ms=1000),
+            [0.0] * 12,
+            previous_action=[0.0] * 4,
+        )
+
+        self.assertAlmostEqual(observation[6], -1.0)
+        self.assertAlmostEqual(observation[7], 0.0, places=7)
+        self.assertAlmostEqual(observation[8], -0.5)
+
     def test_ros_right_handed_spatial_inputs_preserve_unity_38d_observation(self):
         adapter = UnityObservationAdapter()
         unity_builder = ObservationBuilder(sample_profile(), task_mode="MoveToDig")
@@ -208,8 +275,16 @@ class ObservationBuilderTest(unittest.TestCase):
 
         self.assertEqual(action, [0.04, -0.05, 0.015, -0.3])
 
-    def test_normalize_position_respects_profile_sign(self):
-        self.assertEqual(normalize_position(1.0, {"range": [0.0, 2.0], "sign": -1}), -0.0)
+    def test_pc_joint_observation_matches_unity_profile_sign(self):
+        actuator = {
+            "range": [0.0, 2.0],
+            "sign": -1,
+            "max_speed_positive": 2.0,
+            "max_speed_negative": 4.0,
+        }
+
+        self.assertEqual(normalize_position(0.5, actuator), 0.5)
+        self.assertEqual(normalize_velocity(1.0, actuator), -0.25)
 
     def test_deploy_absolute_encoder_range_overrides_unity_prismatic_range(self):
         actuator = {
@@ -232,6 +307,20 @@ class ObservationBuilderTest(unittest.TestCase):
         }
 
         with self.assertRaisesRegex(ValueError, "deploy_position_observation"):
+            position_observation_range(actuator)
+
+    def test_rejects_pc_encoder_direction_metadata(self):
+        actuator = {
+            "range": [-0.1, 0.1],
+            "deploy_position_observation": {
+                "source": "stm32_absolute_cable_encoder",
+                "range": [0.06, 0.16],
+                "status": "firmware_safety_bounds",
+                "command_to_encoder_velocity_sign": -1,
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "deploy_position_observation contract"):
             position_observation_range(actuator)
 
 

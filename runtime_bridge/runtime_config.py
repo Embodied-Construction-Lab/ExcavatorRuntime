@@ -90,7 +90,6 @@ class ManualJogConfig:
     command_period_ms: int
     heartbeat_timeout_ms: int
     max_hold_ms: int
-    position_margin_m: float
 
 
 @dataclass(frozen=True)
@@ -241,7 +240,6 @@ def load_runtime_config(
             "command_period_ms",
             "heartbeat_timeout_ms",
             "max_hold_ms",
-            "position_margin_m",
         },
     )
     _validate_fields(
@@ -336,12 +334,6 @@ def load_runtime_config(
     max_hold_ms = _require_int_range(
         "manual_jog.max_hold_ms", manual_jog.get("max_hold_ms"), 250, 5000
     )
-    position_margin_m = _require_number_range(
-        "manual_jog.position_margin_m",
-        manual_jog.get("position_margin_m"),
-        0.0005,
-        0.01,
-    )
     if follow_control.get("mode") != "supervised_canary":
         raise RuntimeConfigError(
             "follow_control.mode 当前必须是 'supervised_canary'，"
@@ -394,7 +386,6 @@ def load_runtime_config(
             command_period_ms=command_period_ms,
             heartbeat_timeout_ms=heartbeat_timeout_ms,
             max_hold_ms=max_hold_ms,
-            position_margin_m=position_margin_m,
         ),
         follow_control=FollowControlConfig(
             mode=follow_control["mode"],

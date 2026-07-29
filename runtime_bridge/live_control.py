@@ -101,8 +101,6 @@ class FollowCanaryEnvelope:
             for value in values
         ):
             raise ValueError("follow policy output must contain four finite numbers")
-        if any(abs(float(value)) > 1.0 for value in values):
-            raise ValueError("follow policy output must remain within [-1, 1]")
         return tuple(
             float(value)
             if name in self.allowed_actuators
@@ -226,9 +224,8 @@ def build_manual_jog_action(
     direction: int,
     allowed_actuators: Sequence[str],
     speed_fraction: float,
-    position_margin_m: float,
 ) -> ManualJogDecision:
-    """Build one raw cable-length jog command with a direction-aware endpoint margin."""
+    """Build one bounded single-axis command while preserving the requested action sign."""
     allowed = tuple(allowed_actuators)
     if actuator not in allowed or actuator not in {"boom", "stick", "bucket"}:
         raise ValueError(f"manual jog actuator is not an allowed actuator: {actuator!r}")
@@ -236,8 +233,6 @@ def build_manual_jog_action(
         raise ValueError("manual jog direction must be -1 or +1")
     if not math.isfinite(speed_fraction) or not 0.0 < speed_fraction <= 0.2:
         raise ValueError("manual jog speed_fraction must be in (0, 0.2]")
-    if not math.isfinite(position_margin_m) or position_margin_m <= 0.0:
-        raise ValueError("manual jog position_margin_m must be positive")
 
     actuators = machine_profile.get("actuators")
     profile = actuators.get(actuator) if isinstance(actuators, Mapping) else None
@@ -252,29 +247,15 @@ def build_manual_jog_action(
         raise ValueError(
             "manual jog requires firmware_safety_bounds or field_calibrated absolute encoder range"
         )
-    command_to_encoder_sign = deploy.get("command_to_encoder_velocity_sign")
-    if isinstance(command_to_encoder_sign, bool) or command_to_encoder_sign not in (-1, 1):
-        raise ValueError(
-            "manual jog requires command_to_encoder_velocity_sign from the deployed firmware contract"
-        )
-    lower, upper = position_observation_range(profile)
-    if position_margin_m * 2.0 >= upper - lower:
-        raise ValueError("manual jog position margin consumes the actuator range")
+    position_observation_range(profile)
     position = float(state.actuator_state[actuator]["position_m"])
     if not math.isfinite(position):
         return ManualJogDecision(False, f"{actuator}_position_invalid", (0.0,) * 4, position)
-    if direction > 0 and position >= upper - position_margin_m:
-        return ManualJogDecision(False, f"{actuator}_upper_margin", (0.0,) * 4, position)
-    if direction < 0 and position <= lower + position_margin_m:
-        return ManualJogDecision(False, f"{actuator}_lower_margin", (0.0,) * 4, position)
 
     action_index = profile.get("action_index")
     if isinstance(action_index, bool) or not isinstance(action_index, int) or not 0 <= action_index < 4:
         raise ValueError(f"manual jog action_index is invalid for {actuator}")
-    # direction describes raw encoder cable length. STM32 can invert the incoming
-    # physical velocity reference before closing its speed loop.
-    command_direction = direction * int(command_to_encoder_sign)
-    limit_name = "max_speed_positive" if command_direction > 0 else "max_speed_negative"
+    limit_name = "max_speed_positive" if direction > 0 else "max_speed_negative"
     speed_limit = profile.get(limit_name)
     if (
         isinstance(speed_limit, bool)
@@ -284,7 +265,7 @@ def build_manual_jog_action(
     ):
         raise ValueError(f"manual jog {limit_name} is invalid for {actuator}")
     values = [0.0, 0.0, 0.0, 0.0]
-    values[action_index] = command_direction * float(speed_limit) * speed_fraction
+    values[action_index] = direction * float(speed_limit) * speed_fraction
     return ManualJogDecision(
         True,
         "manual_jog_allowed",

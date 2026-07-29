@@ -60,6 +60,11 @@ class _NonFiniteOutputSession(_PolicySession):
         return [np.array([[0.25, np.nan, 0.75, -1.0]], dtype=np.float32)]
 
 
+class _OutOfRangeOutputSession(_PolicySession):
+    def run(self, _output_names, _feed):
+        return [np.array([[1.25, -1.5, 0.75, -1.0]], dtype=np.float32)]
+
+
 class _WrongObservationNameSession(_PolicySession):
     def __init__(self, model_path, providers):
         super().__init__(model_path, providers)
@@ -120,6 +125,11 @@ class OnnxPolicyTest(unittest.TestCase):
 
         with self.assertRaisesRegex(OnnxPolicyLoadError, "非有限"):
             policy.run([0.0] * 38)
+
+    def test_returns_finite_model_output_without_early_clipping(self):
+        policy = self._make_policy(_OutOfRangeOutputSession)
+
+        self.assertEqual(policy.run([0.0] * 38), [1.25, -1.5, 0.75, -1.0])
 
     def test_rejects_wrong_observation_signature(self):
         for session_type in (_WrongObservationNameSession, _WrongObservationShapeSession):
