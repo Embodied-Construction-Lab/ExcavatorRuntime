@@ -48,7 +48,13 @@ def sample_profile():
     }
 
 
-def sample_state(boom=0.0, stick=0.0, bucket=-0.1, control_enabled=True):
+def sample_state(
+    boom=0.0,
+    stick=0.0,
+    bucket=-0.1,
+    swing=0.0,
+    control_enabled=True,
+):
     return MachineStatePacket(
         seq=1,
         stamp_ms=1000,
@@ -63,7 +69,7 @@ def sample_state(boom=0.0, stick=0.0, bucket=-0.1, control_enabled=True):
             "boom": {"position_m": boom, "velocity_mps": 0.0},
             "stick": {"position_m": stick, "velocity_mps": 0.0},
             "bucket": {"position_m": bucket, "velocity_mps": 0.0},
-            "swing": {"position_rad": 0.0, "velocity_rad_s": 0.0},
+            "swing": {"position_rad": swing, "velocity_rad_s": 0.0},
         },
         joint_state={"position_rad": {"swing": 0.0, "boom": 0.0, "arm": 0.0, "bucket": 0.0}},
     )
@@ -71,7 +77,7 @@ def sample_state(boom=0.0, stick=0.0, bucket=-0.1, control_enabled=True):
 
 def sample_fixed_action_profile(machine_profile: bytes, urdf: bytes):
     return {
-        "schema_version": "fixed_action_profile.v1",
+        "schema_version": "fixed_action_profile.v2",
         "profile_id": "test_actions_v1",
         "machine_id": "scale_excavator_v1",
         "action_order": ["boom", "stick", "bucket", "swing"],
@@ -94,7 +100,6 @@ def sample_fixed_action_profile(machine_profile: bytes, urdf: bytes):
                     "stick": [-1.0, 1.0],
                     "bucket": [-1.0, 1.0],
                 },
-                "bucket_pitch_deg": [-90.0, 90.0],
                 "swing_rad": [-0.5, 0.5],
             },
             "dump": {
@@ -103,7 +108,6 @@ def sample_fixed_action_profile(machine_profile: bytes, urdf: bytes):
                     "stick": [-1.0, 1.0],
                     "bucket": [-1.0, 1.0],
                 },
-                "bucket_pitch_deg": [-180.0, 180.0],
                 "swing_rad": [-1.57, 1.57],
             },
         },
@@ -112,25 +116,19 @@ def sample_fixed_action_profile(machine_profile: bytes, urdf: bytes):
                 {
                     "step_id": "dig_probe",
                     "label": "probe",
-                    "delta_by_actuator": {
-                        "boom": 0.5, "stick": 0.0, "bucket": 0.0, "swing": 0.0
-                    },
+                        "target_normalized_position": {"boom": 0.5},
                 },
                 {
                     "step_id": "dig_curl",
                     "label": "curl",
-                    "delta_by_actuator": {
-                        "boom": 0.0, "stick": 0.0, "bucket": -1.0, "swing": 0.0
-                    },
+                        "target_normalized_position": {"bucket": -1.0},
                 },
             ],
             "dump": [
                 {
                     "step_id": "dump_open",
                     "label": "open",
-                    "delta_by_actuator": {
-                        "boom": 0.0, "stick": 0.0, "bucket": 1.0, "swing": 0.0
-                    },
+                        "target_normalized_position": {"bucket": 1.0},
                 },
             ],
         },
@@ -164,7 +162,68 @@ def load_sample_fixed_action_profile(mutator=None):
 
 
 class FixedActionTest(unittest.TestCase):
-    def test_deployed_candidate_uses_unity_deltas_and_requested_constant_sixty_percent_speed(self):
+    def test_reached_axis_stays_zero_while_other_axis_finishes_current_step(self):
+        def add_stick_target(payload):
+            payload["actions"]["dig"][0]["target_normalized_position"]["stick"] = 0.5
+
+        temporary, profile = load_sample_fixed_action_profile(add_stick_target)
+        self.addCleanup(temporary.cleanup)
+        executor = FixedActionExecutor(
+            profile.sequence("dig"),
+            sample_profile(),
+            tolerance=0.03,
+        )
+
+        first_packet, _ = executor.step(
+            sample_state(boom=0.048, stick=0.0),
+            now_s=0.0,
+            seq=1,
+            valid_for_ms=100,
+        )
+        drifted_packet, _ = executor.step(
+            sample_state(boom=0.03, stick=0.0),
+            now_s=0.1,
+            seq=2,
+            valid_for_ms=100,
+        )
+
+        self.assertEqual(first_packet.action[0], 0.0)
+        self.assertGreater(first_packet.action[1], 0.0)
+        self.assertEqual(drifted_packet.action[0], 0.0)
+        self.assertGreater(drifted_packet.action[1], 0.0)
+
+    def test_axis_latch_resets_when_next_step_starts(self):
+        def add_boom_to_second_step(payload):
+            payload["actions"]["dig"][1]["target_normalized_position"]["boom"] = -0.5
+
+        temporary, profile = load_sample_fixed_action_profile(add_boom_to_second_step)
+        self.addCleanup(temporary.cleanup)
+        executor = FixedActionExecutor(
+            profile.sequence("dig"),
+            sample_profile(),
+            tolerance=0.03,
+            hold_s=0.15,
+        )
+
+        hold_packet, hold_status = executor.step(
+            sample_state(boom=0.05),
+            now_s=0.0,
+            seq=1,
+            valid_for_ms=100,
+        )
+        next_packet, next_status = executor.step(
+            sample_state(boom=0.05),
+            now_s=0.2,
+            seq=2,
+            valid_for_ms=100,
+        )
+
+        self.assertEqual(hold_packet.action, [0.0, 0.0, 0.0, 0.0])
+        self.assertEqual(hold_status.phase, "hold")
+        self.assertLess(next_packet.action[0], 0.0)
+        self.assertEqual(next_status.step_index, 1)
+
+    def test_deployed_candidate_uses_absolute_targets_and_constant_sixty_percent_speed(self):
         project_root = Path(__file__).resolve().parents[2]
         payload = json.loads(
             (project_root / "runtime_bridge/config/fixed_actions.json").read_text(
@@ -180,18 +239,23 @@ class FixedActionTest(unittest.TestCase):
         self.assertEqual(payload["controller"]["min_action"], 0.6)
         self.assertEqual(payload["controller"]["max_action"], 0.6)
         self.assertEqual(
-            [step["delta_by_actuator"] for step in payload["actions"]["dig"]],
             [
-                {"boom": 0.5, "stick": 0.0, "bucket": 0.0, "swing": 0.0},
-                {"boom": 0.0, "stick": 0.0, "bucket": -1.4, "swing": 0.0},
-                {"boom": -0.5, "stick": 0.2, "bucket": 0.0, "swing": 0.0},
+                step["target_normalized_position"]
+                for step in payload["actions"]["dig"]
+            ],
+            [
+                {"boom": 0.6, "stick": -0.15, "bucket": 0.9},
+                {"boom": -0.35, "stick": 0.15, "bucket": -0.85},
             ],
         )
         self.assertEqual(
-            [step["delta_by_actuator"] for step in payload["actions"]["dump"]],
             [
-                {"boom": 0.0, "stick": 0.0, "bucket": 1.4, "swing": 0.0},
-                {"boom": 0.0, "stick": 0.0, "bucket": -1.4, "swing": 0.0},
+                step["target_normalized_position"]
+                for step in payload["actions"]["dump"]
+            ],
+            [
+                {"bucket": 0.9},
+                {"bucket": -0.85},
             ],
         )
         self.assertEqual(
@@ -226,17 +290,25 @@ class FixedActionTest(unittest.TestCase):
         for steps in payload["actions"].values():
             for step in steps:
                 for actuator_name in action_order:
-                    delta = float(step["delta_by_actuator"][actuator_name])
-                    if delta == 0.0 or actuator_name == "swing":
+                    targets = step["target_normalized_position"]
+                    if actuator_name not in targets or actuator_name == "swing":
                         continue
+                    target = float(targets[actuator_name])
                     actuator = machine_profile["actuators"][actuator_name]
-                    range_min, range_max = actuator["range"]
+                    range_min, range_max = actuator["deploy_position_observation"][
+                        "range"
+                    ]
+                    worst_normalized_travel = max(
+                        abs(target - endpoint) for endpoint in (-1.0, 1.0)
+                    )
                     travel_m = max(
-                        abs(delta) - float(controller["tolerance"]),
+                        worst_normalized_travel - float(controller["tolerance"]),
                         0.0,
                     ) * (float(range_max) - float(range_min)) / 2.0
                     speed_key = (
-                        "max_speed_positive" if delta > 0.0 else "max_speed_negative"
+                        "max_speed_positive"
+                        if target > 0.0
+                        else "max_speed_negative"
                     )
                     command_speed_mps = (
                         float(controller["max_action"]) * float(actuator[speed_key])
@@ -286,8 +358,8 @@ class FixedActionTest(unittest.TestCase):
         self.assertEqual(profile.action_order, ("boom", "stick", "bucket", "swing"))
         self.assertEqual(profile.sequence("dig")[0].label, "probe")
         self.assertEqual(
-            profile.sequence("dump")[0].delta_normalized_qpos,
-            (0.0, 0.0, 1.0, 0.0),
+            profile.sequence("dump")[0].target_normalized_qpos,
+            (None, None, 1.0, None),
         )
         self.assertEqual(len(profile.sha256), 64)
 
@@ -296,15 +368,27 @@ class FixedActionTest(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
 
         accepted = profile.evaluate_start(
-            "dig", sample_state(), sample_profile(), bucket_pitch_rad=0.0
+            "dig", sample_state(), sample_profile()
         )
         rejected = profile.evaluate_start(
-            "dig", sample_state(boom=0.09), sample_profile(), bucket_pitch_rad=0.0
+            "dig", sample_state(boom=0.09), sample_profile()
         )
 
         self.assertTrue(accepted.allowed)
         self.assertFalse(rejected.allowed)
         self.assertEqual(rejected.reason, "dig_boom_outside_start_envelope")
+
+    def test_fixed_action_start_ignores_envelope_for_continuous_swing(self):
+        temporary, profile = load_sample_fixed_action_profile()
+        self.addCleanup(temporary.cleanup)
+
+        decision = profile.evaluate_start(
+            "dump",
+            sample_state(swing=2.4),
+            sample_profile(),
+        )
+
+        self.assertTrue(decision.allowed)
 
     def test_rejects_profile_when_machine_profile_digest_does_not_match(self):
         with self.assertRaisesRegex(FixedActionProfileError, "machine_profile_sha256"):
@@ -351,8 +435,12 @@ class FixedActionTest(unittest.TestCase):
     def test_rejects_invalid_status_or_action_step(self):
         invalid_mutators = (
             lambda payload: payload.update(validation_status="assumed"),
-            lambda payload: payload["actions"]["dig"][0].update(delta_by_actuator={}),
-            lambda payload: payload["actions"]["dump"][0]["delta_by_actuator"].update(
+            lambda payload: payload["actions"]["dig"][0].update(
+                target_normalized_position={}
+            ),
+            lambda payload: payload["actions"]["dump"][0][
+                "target_normalized_position"
+            ].update(
                 bucket=float("nan")
             ),
             lambda payload: payload.update(
@@ -642,7 +730,7 @@ class FixedActionTest(unittest.TestCase):
         self.assertTrue(repeated_status.failed)
         self.assertEqual(repeated_status.reason_code, "STEP_TIMEOUT")
 
-    def test_relative_target_outside_normalized_range_is_clamped_like_unity(self):
+    def test_absolute_target_drives_back_toward_declared_pose_from_either_side(self):
         temporary, profile = load_sample_fixed_action_profile()
         self.addCleanup(temporary.cleanup)
         executor = FixedActionExecutor(profile.sequence("dig"), sample_profile())
@@ -651,7 +739,7 @@ class FixedActionTest(unittest.TestCase):
             sample_state(boom=0.09), now_s=0.0, seq=1, valid_for_ms=100
         )
 
-        self.assertGreater(packet.action[0], 0.0)
+        self.assertLess(packet.action[0], 0.0)
         self.assertFalse(status.failed)
         self.assertEqual(status.phase, "running")
 

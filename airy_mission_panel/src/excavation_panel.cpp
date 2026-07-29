@@ -1271,8 +1271,12 @@ void ExcavationPanel::refreshView()
   refreshManualJogControls(view);
   cancel_button_->setEnabled(view.cancel_enabled);
   safety_label_->setText(QString::fromStdString(view.safety_text));
+  const bool safety_ready =
+    view.safety_text.rfind("LOCKED", 0) != 0 &&
+    view.safety_text.size() >= 8 &&
+    view.safety_text.compare(view.safety_text.size() - 8, 8, " / READY") == 0;
   safety_label_->setStyleSheet(
-    view.safety_text.find("READY") != std::string::npos ?
+    safety_ready ?
     "font-weight: bold; color: #66dd88;" : "font-weight: bold; color: #ff6666;");
   runtime_label_->setText(QString::fromStdString(
       runtime.input_source + " / " + runtime.execution_mode + " / " +

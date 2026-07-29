@@ -32,6 +32,7 @@ _MAP_SOURCES = {
 }
 _CLOCK_MODES = {"ros_clock"}
 _MAX_SOURCE_AGE_S = 2.0
+_MAX_CLOCK_SKEW_S = 0.5
 
 
 class TrajectoryDigestMismatch(ValueError):
@@ -127,7 +128,7 @@ class FollowTrajectorySnapshot:
             raise ValueError("input_source does not match runtime")
         if current > self.valid_until_s:
             raise ValueError("trajectory snapshot expired")
-        if current + 1e-6 < self.created_at_s:
+        if current + _MAX_CLOCK_SKEW_S < self.created_at_s:
             raise ValueError("trajectory snapshot is from the future")
         if self.trajectory_sha256 != self.computed_sha256():
             raise TrajectoryDigestMismatch(
@@ -159,7 +160,7 @@ class FollowTrajectorySnapshot:
             raise ValueError("trajectory workspace_constraint does not match control_stage")
         if current > self.valid_until_s:
             raise ValueError("trajectory snapshot expired")
-        if current + 1e-6 < self.created_at_s:
+        if current + _MAX_CLOCK_SKEW_S < self.created_at_s:
             raise ValueError("trajectory snapshot is from the future")
         if self.trajectory_sha256 != self.computed_sha256():
             raise TrajectoryDigestMismatch(

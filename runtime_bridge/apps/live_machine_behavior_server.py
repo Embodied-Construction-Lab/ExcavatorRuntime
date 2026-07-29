@@ -945,26 +945,10 @@ class LiveMachineBehaviorNode(Node):
                 (target.position.x, target.position.y, target.position.z),
             ) > target.radius_m:
                 return self._finish_fixed(goal_handle, action_type, action_type.Result.OUTCOME_FAILED, "NOT_AT_TARGET", "Bucket Tip is outside target radius", start_datagrams)
-            tip_observation = self._adapter.ros_pose_to_unity_bucket_tip(
-                position_m=(
-                    tip.pose.position.x,
-                    tip.pose.position.y,
-                    tip.pose.position.z,
-                ),
-                orientation_xyzw=(
-                    tip.pose.orientation.x,
-                    tip.pose.orientation.y,
-                    tip.pose.orientation.z,
-                    tip.pose.orientation.w,
-                ),
-                stamp_ms=sample.packet.stamp_ms,
-                swing_joint_rad=sample.packet.joint_position_rad["swing"],
-            )
             start_decision = self._fixed_action_profile.evaluate_start(
                 phase,
                 sample.packet,
                 self._machine_profile,
-                bucket_pitch_rad=tip_observation.pitch_rad,
             )
             if not start_decision.allowed:
                 return self._finish_fixed(
@@ -995,8 +979,8 @@ class LiveMachineBehaviorNode(Node):
             if goal_handle.is_cancel_requested:
                 return self._finish_fixed(goal_handle, action_type, action_type.Result.OUTCOME_CANCELLED, "CANCELLED", f"Execute{phase.title()} cancelled", start_datagrams)
             if initial_sample is not None:
-                # Establish the relative action target from the exact state frame
-                # whose matching Bucket Tip and start envelope were accepted.
+                # Use the exact state frame whose matching Bucket Tip and
+                # start envelope were accepted.
                 sample = initial_sample
                 initial_sample = None
             else:

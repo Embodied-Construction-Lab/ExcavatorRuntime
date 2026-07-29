@@ -10,6 +10,8 @@ install(
   FILES
     __init__.py
     contract.py
+    demo.py
+    demo_runner.py
     follow.py
     home.py
     markers.py
@@ -70,6 +72,12 @@ install(
 )
 
 install(
+  PROGRAMS runtime_ros/run_excavation_demo.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME run_excavation_demo
+)
+
+install(
   PROGRAMS apps/publish_mission_markers.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME mission_snapshot_publisher
@@ -113,6 +121,17 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_excavation_cycle_action_integration
     tests/test_excavation_cycle_action_integration.py
+    TIMEOUT 30
+  )
+  ament_add_pytest_test(test_demo_program tests/test_demo_program.py)
+  ament_add_pytest_test(test_demo_runner tests/test_demo_runner.py)
+  ament_add_pytest_test(
+    test_excavation_demo_ros_goal
+    tests/test_excavation_demo_ros_goal.py
+  )
+  ament_add_pytest_test(
+    test_excavation_demo_action_integration
+    tests/test_excavation_demo_action_integration.py
     TIMEOUT 30
   )
 endif()

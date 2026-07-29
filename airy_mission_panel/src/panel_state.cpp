@@ -31,9 +31,11 @@ PanelView derive_panel_view(
     !runtime.motion_authorized && !runtime.sender_constructed &&
     runtime.quiescent && runtime.action_datagrams == 0 &&
     runtime.active_behavior.empty();
+  const bool supported_control_backend =
+    runtime.motion_backend == "udp_policy" || runtime.motion_backend == "orin_edge";
   const bool safe_control =
     runtime.received && runtime.fresh && runtime.input_source == "live" &&
-    runtime.execution_mode == "control" && runtime.motion_backend == "udp_policy" &&
+    runtime.execution_mode == "control" && supported_control_backend &&
     runtime.motion_authorized && runtime.sender_constructed && runtime.quiescent &&
     runtime.state_fresh && runtime.control_enabled && runtime.sensor_valid &&
     runtime.stm32_alive && !runtime.estop && runtime.fault_free &&
@@ -41,14 +43,19 @@ PanelView derive_panel_view(
     runtime.active_behavior.empty();
   const bool supervised_canary =
     runtime.follow_control_mode == "supervised_canary";
+  const bool orin_edge_follow =
+    runtime.motion_backend == "orin_edge" && runtime.follow_control_mode == "edge_onnx";
   const bool safe_follow_control =
-    safe_control && supervised_canary && runtime.follow_canary_ready;
+    safe_control &&
+    ((supervised_canary && runtime.follow_canary_ready) || orin_edge_follow);
   const bool safe_fixed_control =
     safe_control &&
+    (runtime.motion_backend == "udp_policy" || runtime.motion_backend == "orin_edge") &&
     (runtime.control_stage == "commissioning" ||
     (runtime.control_stage == "production" && runtime.fixed_actions_validated));
   const bool safe_full_mission_control =
-    safe_control && runtime.control_stage == "production" &&
+    safe_control && runtime.motion_backend == "udp_policy" &&
+    runtime.control_stage == "production" &&
     runtime.fixed_actions_validated;
   const bool idle = owned_operation == OwnedOperation::kIdle;
 
@@ -64,7 +71,9 @@ PanelView derive_panel_view(
     safe_fixed_control && idle && resources.execute_dump_available;
   view.full_mission_enabled =
     safe_full_mission_control && idle && resources.full_mission_available;
-  if (supervised_canary) {
+  if (orin_edge_follow) {
+    view.follow_status_text = "ORIN EDGE FOLLOW / ONNX 100% / UNTIL RESULT OR CANCEL";
+  } else if (supervised_canary) {
     std::ostringstream status;
     status << "SUPERVISED FOLLOW / ONNX 100% / ";
     for (std::size_t index = 0; index < runtime.follow_allowed_actuators.size(); ++index) {
@@ -121,6 +130,15 @@ PanelView derive_panel_view(
     view.safety_text = "LIVE / " + stage + " / READY";
   } else if (!runtime.received || !runtime.fresh) {
     view.safety_text = "LOCKED / RUNTIME STATUS UNAVAILABLE";
+  } else if (
+    runtime.motion_gate_reason == "behavior_active" &&
+    !runtime.active_behavior.empty())
+  {
+    auto behavior = runtime.active_behavior;
+    std::transform(
+      behavior.begin(), behavior.end(), behavior.begin(),
+      [](unsigned char character) {return std::toupper(character);});
+    view.safety_text = "LIVE / BUSY / " + behavior;
   } else {
     auto reason = runtime.motion_gate_reason;
     std::transform(

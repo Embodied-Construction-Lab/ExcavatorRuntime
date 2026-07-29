@@ -21,7 +21,7 @@
     "machine_state_timeout_ms": 500
   },
   "fixed_action": {
-    "expected_profile_sha256": "ff0ffb6360849cf917aeffcba068d33f913a8521ee0eaec8c909aac30e9e2adf"
+    "expected_profile_sha256": "e88bb551dd5e3bf08a766f08f6a695412e7e719a8647011d88026d3c405144c8"
   },
   "manual_jog": {
     "enabled": true,

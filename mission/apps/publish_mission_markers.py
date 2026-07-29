@@ -21,18 +21,24 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from mission.contract import MissionContractError, load_mission
-from mission.markers import build_mission_marker_specs
+from mission.demo import load_demo_program
+from mission.markers import build_demo_marker_specs, build_mission_marker_specs
 
 
 DEFAULT_MISSION = (
     Path(get_package_share_directory("airy_mission_runtime"))
     / "config/excavation_cycle.json"
 )
+DEFAULT_DEMO = (
+    Path(get_package_share_directory("airy_mission_runtime"))
+    / "config/excavation_demo.json"
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="发布文件式Mission的dig/dump RViz标记。")
     parser.add_argument("--mission", type=Path, default=DEFAULT_MISSION)
+    parser.add_argument("--demo", type=Path)
     parser.add_argument("--topic", default="/mission/target_markers")
     parser.add_argument("--rate-hz", type=float, default=2.0)
     return parser
@@ -45,10 +51,17 @@ def parse_cli_args(argv=None) -> argparse.Namespace:
 
 
 class MissionMarkerPublisher(Node):
-    def __init__(self, mission_path: Path, topic: str, rate_hz: float) -> None:
+    def __init__(
+        self,
+        mission_path: Path,
+        topic: str,
+        rate_hz: float,
+        demo_path: Path | None = None,
+    ) -> None:
         super().__init__("excavation_mission_marker_publisher")
         self.mission_path = mission_path
-        self.last_mtime_ns: int | None = None
+        self.demo_path = demo_path
+        self.last_mtime_ns: tuple[int, int | None] | None = None
         self.mission = None
         self.specs = ()
         marker_qos = QoSProfile(
@@ -64,16 +77,25 @@ class MissionMarkerPublisher(Node):
             for phase in ("dig", "dump")
         }
         self.timer = self.create_timer(1.0 / max(rate_hz, 0.1), self.publish_markers)
-        self.get_logger().info(f"mission markers: {mission_path} -> {topic}")
+        source = f"{mission_path}, demo={demo_path}" if demo_path else str(mission_path)
+        self.get_logger().info(f"mission markers: {source} -> {topic}")
 
     def _reload(self) -> bool:
         try:
-            mtime_ns = self.mission_path.stat().st_mtime_ns
+            mtime_ns = (
+                self.mission_path.stat().st_mtime_ns,
+                self.demo_path.stat().st_mtime_ns if self.demo_path else None,
+            )
             if self.specs and mtime_ns == self.last_mtime_ns:
                 return True
             mission = load_mission(self.mission_path)
+            demo = load_demo_program(self.demo_path) if self.demo_path else None
             self.mission = mission
-            self.specs = build_mission_marker_specs(mission)
+            self.specs = (
+                build_demo_marker_specs(demo)
+                if demo is not None
+                else build_mission_marker_specs(mission)
+            )
             self.last_mtime_ns = mtime_ns
             self.get_logger().info(
                 f"loaded mission {mission.mission_id}, status={mission.target_status}, sha256={mission.sha256[:12]}"
@@ -154,7 +176,12 @@ class MissionMarkerPublisher(Node):
 def main() -> int:
     args = parse_cli_args()
     rclpy.init()
-    node = MissionMarkerPublisher(args.mission, args.topic, args.rate_hz)
+    node = MissionMarkerPublisher(
+        args.mission,
+        args.topic,
+        args.rate_hz,
+        demo_path=args.demo,
+    )
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

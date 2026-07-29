@@ -31,6 +31,7 @@ def test_operator_launch_has_one_control_sender_and_no_legacy_sender():
     ):
         assert forbidden not in text
     assert text.count("live_machine_behavior_server.py") >= 1
+    assert text.count("orin_edge_follow_gateway.py") >= 1
     assert "allow_live_machine_motion" in text
 
 
@@ -45,6 +46,20 @@ def test_operator_launch_passes_exact_authorization_to_the_command_sink():
     assert '"ALLOW_LIVE_MACHINE_MOTION"' in control_process
 
 
+def test_orin_edge_gateway_receives_behavior_endpoint_but_no_pc_action_sink():
+    text = launch_text()
+    gateway_process = text[
+        text.index("gateway_process = ExecuteProcess(") :
+        text.index("entities.extend(\n            [gateway_process")
+    ]
+
+    assert "orin_edge_follow_gateway.py" in gateway_process
+    assert '"--orin-host"' in gateway_process
+    assert '"--orin-port"' in gateway_process
+    assert '"--motion-authorization"' in gateway_process
+    assert "live_machine_behavior_server.py" not in gateway_process
+
+
 def test_non_motion_live_planner_receives_only_supported_arguments():
     text = launch_text()
     planner_process = text[
@@ -54,6 +69,7 @@ def test_non_motion_live_planner_receives_only_supported_arguments():
 
     assert '"--profile"' in planner_process
     assert '"--mission"' in planner_process
+    assert '"--demo"' in planner_process
     assert '"--urdf"' in planner_process
     assert '"--motion-authorization"' not in planner_process
 

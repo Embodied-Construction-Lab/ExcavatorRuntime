@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import threading
 import time
 
@@ -18,6 +19,10 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+
+
+_CHILD_FUTURE_POLL_S = 0.01
+_FEEDBACK_PERIOD_S = 0.1
 
 
 class ChildFailure(RuntimeError):
@@ -146,7 +151,7 @@ class ExcavationCycleNode(Node):
 
     def _plan_phase(self, parent, target, stage: str):
         goal = Plan.Goal()
-        goal.target = target
+        goal.target = self._fresh_target(target)
         goal.planning_scope = "execution_strict"
         wrapped = self._run_child(parent, self._plan, goal, stage)
         result = wrapped.result
@@ -176,7 +181,7 @@ class ExcavationCycleNode(Node):
 
     def _fixed_phase(self, parent, client, action_type, target, stage: str) -> int:
         goal = action_type.Goal()
-        goal.target = target
+        goal.target = self._fresh_target(target)
         wrapped = self._run_child(parent, client, goal, stage)
         result = wrapped.result
         if result.outcome != action_type.Result.OUTCOME_SUCCEEDED or result.reason_code != "SEQUENCE_COMPLETED" or not result.quiescence_confirmed:
@@ -188,6 +193,11 @@ class ExcavationCycleNode(Node):
                 result.quiescence_confirmed,
             )
         return result.action_datagrams
+
+    def _fresh_target(self, target):
+        snapshot = copy.deepcopy(target)
+        snapshot.header.stamp = self.get_clock().now().to_msg()
+        return snapshot
 
     def _run_child(self, parent, client, goal, stage: str):
         if not client.wait_for_server(timeout_sec=1.0):
@@ -214,12 +224,21 @@ class ExcavationCycleNode(Node):
 
     def _wait_future(self, parent, future, stage: str, child) -> None:
         cancel_sent = False
+        next_feedback_at = 0.0
         while rclpy.ok(context=self.context) and not future.done():
             if parent.is_cancel_requested and child is not None and not cancel_sent:
                 child.cancel_goal_async()
                 cancel_sent = True
-            self._feedback(parent, stage, "cancelling" if cancel_sent else "running", 0)
-            time.sleep(0.1)
+            now_s = time.monotonic()
+            if now_s >= next_feedback_at:
+                self._feedback(
+                    parent,
+                    stage,
+                    "cancelling" if cancel_sent else "running",
+                    0,
+                )
+                next_feedback_at = now_s + _FEEDBACK_PERIOD_S
+            time.sleep(_CHILD_FUTURE_POLL_S)
         if not future.done() or future.exception() is not None:
             raise ChildFailure(stage, "ACTION_TRANSPORT_ERROR", f"{stage} Action future failed")
 

@@ -76,7 +76,7 @@ class ObservationBuilderTest(unittest.TestCase):
 
         self.assertEqual(position_observation_range(actuators["boom"]), (0.070, 0.190))
         self.assertEqual(position_observation_range(actuators["stick"]), (0.060, 0.210))
-        self.assertEqual(position_observation_range(actuators["bucket"]), (0.060, 0.160))
+        self.assertEqual(position_observation_range(actuators["bucket"]), (0.060, 0.170))
 
     def test_true_machine_cylinder_feedback_maps_to_unity_observation_direction(self):
         workspace_root = Path(__file__).resolve().parents[3]

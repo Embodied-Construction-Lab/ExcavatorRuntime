@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rl-excavator.local/schemas/excavation_demo.schema.json",
+  "title": "Excavation Demo Program",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "demo_id",
+    "frame_id",
+    "target_status",
+    "dig_points",
+    "dump_target",
+    "limits"
+  ],
+  "properties": {
+    "schema_version": {"const": "excavation_demo.v1"},
+    "demo_id": {"type": "string", "minLength": 1},
+    "frame_id": {"const": "machine_root_ros"},
+    "target_status": {
+      "enum": ["placeholder", "rviz_adjusted", "field_validated"]
+    },
+    "dig_points": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/dig_target"}
+    },
+    "dump_target": {"$ref": "#/$defs/target"},
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "waypoint_tolerance_m",
+        "waypoint_dwell_s",
+        "tracking_timeout_s",
+        "settle_s"
+      ],
+      "properties": {
+        "waypoint_tolerance_m": {"type": "number", "exclusiveMinimum": 0.0},
+        "waypoint_dwell_s": {"type": "number", "minimum": 0.0},
+        "tracking_timeout_s": {"type": "number", "exclusiveMinimum": 0.0},
+        "settle_s": {"type": "number", "exclusiveMinimum": 0.0}
+      }
+    }
+  },
+  "$defs": {
+    "vec3": {
+      "type": "array",
+      "prefixItems": [
+        {"type": "number"},
+        {"type": "number"},
+        {"type": "number"}
+      ],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position_m", "normal", "radius_m"],
+      "properties": {
+        "position_m": {"$ref": "#/$defs/vec3"},
+        "normal": {"$ref": "#/$defs/vec3"},
+        "radius_m": {"type": "number", "exclusiveMinimum": 0.0}
+      }
+    },
+    "dig_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["point_id", "position_m", "normal", "radius_m"],
+      "properties": {
+        "point_id": {"type": "string", "minLength": 1},
+        "position_m": {"$ref": "#/$defs/vec3"},
+        "normal": {"$ref": "#/$defs/vec3"},
+        "radius_m": {"type": "number", "exclusiveMinimum": 0.0}
+      }
+    }
+  }
+}

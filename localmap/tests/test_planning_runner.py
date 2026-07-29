@@ -19,11 +19,14 @@ from apps.planning.run_planning_once import (
     build_planning_commands,
     execute_planning_commands,
     execute_prepared_run,
+    execute_staged_run,
     invalidate_outputs,
     outputs_for_scope,
     PlanningCommand,
     PreparedPlanningRun,
+    prepare_orin_edge_planning_run,
     prepare_mission_planning_run,
+    publish_prepared_run,
 )
 from localmap_core.planning_intent import PlanningIntent
 from localmap_core.planning_inputs import LivePlanningInputs
@@ -142,6 +145,73 @@ class PlanningRunnerTest(unittest.TestCase):
         self.assertNotIn(str(local_map_path), by_name["obstacles"])
         self.assertNotIn(str(bucket_tip_path), request)
 
+    def test_orin_edge_run_is_execution_strict_and_publishes_live_latest_atomically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            local_map_path = root / "local_map.json"
+            bucket_tip_path = root / "bucket_tip.json"
+            local_map_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "local_map.v1",
+                        "timestamp_s": 999.8,
+                        "frame_id": "machine_root_ros",
+                        "dig_targets": [],
+                        "dump_targets": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            bucket_tip_path.write_text(
+                json.dumps(
+                    {
+                        "stamp_s": 999.9,
+                        "frame_id": "machine_root_ros",
+                        "status": "live_from_tf",
+                        "position_m": [0.1, 0.2, 0.3],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            profile = load_planning_profile()
+            profile = replace(
+                profile,
+                inputs=replace(
+                    profile.inputs,
+                    live_local_map=local_map_path,
+                    live_bucket_tip=bucket_tip_path,
+                ),
+                outputs=replace(
+                    profile.outputs,
+                    directory=root / "live_latest",
+                    local_map=root / "live_latest" / "local_map.json",
+                    request=root / "live_latest" / "request.json",
+                    trajectory=root / "live_latest" / "trajectory.json",
+                    observation_slice=root / "live_latest" / "observation.json",
+                ),
+            )
+
+            prepared = prepare_orin_edge_planning_run(
+                profile,
+                mission_path=LOCALMAP_DIR.parent / "mission" / "config" /
+                "excavation_cycle.json",
+                phase="dig",
+                now_s=1000.0,
+                python=Path("/usr/bin/python3"),
+                staging_dir=root / "staging",
+            )
+
+        self.assertEqual(prepared.final_outputs, profile.outputs)
+        self.assertEqual(
+            prepared.published_artifacts,
+            ("local_map", "request", "trajectory", "observation_slice"),
+        )
+        trajectory_command = next(
+            command for command in prepared.commands if command.name == "trajectory"
+        )
+        self.assertIn("execution_strict", trajectory_command.argv)
+        self.assertIn("--workspace-disable-reason", trajectory_command.argv)
+
     def test_preview_outputs_are_isolated_from_future_control_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -223,6 +293,52 @@ class PlanningRunnerTest(unittest.TestCase):
 
             self.assertFalse(final_outputs.local_map.exists())
             self.assertEqual(final_outputs.observation_slice.read_text(encoding="utf-8"), "previous")
+
+    def test_staged_execution_requires_an_explicit_publish(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staging = root / "staging"
+            final = root / "final"
+            staging.mkdir()
+
+            def outputs(path):
+                return PlanningOutputs(
+                    directory=path,
+                    local_map=path / "local_map.json",
+                    request=path / "request.json",
+                    trajectory=path / "trajectory.json",
+                    observation_slice=path / "observation.json",
+                )
+
+            staging_outputs = outputs(staging)
+            final_outputs = outputs(final)
+            for path in (
+                staging_outputs.local_map,
+                staging_outputs.request,
+                staging_outputs.trajectory,
+                staging_outputs.observation_slice,
+            ):
+                path.write_text(path.name, encoding="utf-8")
+            prepared = PreparedPlanningRun(
+                commands=(),
+                snapshot=LivePlanningInputs(
+                    local_map=MappingProxyType({"frame_id": "machine_root_ros"}),
+                    bucket_tip=MappingProxyType({"frame_id": "machine_root_ros"}),
+                ),
+                local_map_snapshot=staging / "local_map.snapshot.json",
+                bucket_tip_snapshot=staging / "bucket_tip.snapshot.json",
+                staging_outputs=staging_outputs,
+                final_outputs=final_outputs,
+            )
+
+            execute_staged_run(prepared)
+
+            self.assertFalse(final_outputs.trajectory.exists())
+            publish_prepared_run(prepared)
+            self.assertEqual(
+                final_outputs.trajectory.read_text(encoding="utf-8"),
+                "trajectory.json",
+            )
 
 
 if __name__ == "__main__":

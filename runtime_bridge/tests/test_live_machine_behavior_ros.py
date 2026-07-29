@@ -3,6 +3,7 @@ import json
 import socket
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,26 @@ from runtime_bridge.protocol import MachineStatePacket, decode_packet, encode_pa
 
 
 AIRY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _init_isolated_ros_context(context) -> None:
+    namespace = f"/live_machine_behavior_test_{uuid.uuid4().hex}"
+    surfaces = (
+        "/bucket_tip_pose_machine_root_ros",
+        "/excavator/execute_dig",
+        "/excavator/execute_dump",
+        "/excavator/follow",
+        "/excavator/hold_to_jog",
+        "/excavator/jog_heartbeat",
+        "/excavator/operator_heartbeat",
+        "/joint_states",
+        "/mission/runtime_status",
+        "/planning/trajectory_snapshot",
+    )
+    arguments = ["--ros-args"]
+    for surface in surfaces:
+        arguments.extend(["-r", f"{surface}:={namespace}{surface}"])
+    rclpy.init(args=arguments, context=context)
 
 
 def _free_udp_port():
@@ -139,18 +160,14 @@ def _write_fixture(
                 {
                     "step_id": "dig_test_boom",
                     "label": "dig_test_boom",
-                    "delta_by_actuator": {
-                        "boom": 0.02, "stick": 0.0, "bucket": 0.0, "swing": 0.0
-                    },
+                    "target_normalized_position": {"boom": 0.02},
                 }
             ],
             "dump": [
                 {
                     "step_id": "dump_test_bucket",
                     "label": "dump_test_bucket",
-                    "delta_by_actuator": {
-                        "boom": 0.0, "stick": 0.0, "bucket": 0.02, "swing": 0.0
-                    },
+                    "target_normalized_position": {"bucket": 0.02},
                 }
             ],
         }
@@ -236,7 +253,14 @@ def _follow_goal(node, mission):
     snapshot.input_source = "live"
     snapshot.map_source = "live_local_map"
     snapshot.clock_mode = "ros_clock"
-    snapshot.waypoints = [Point(x=0.6, y=0.3, z=0.2)]
+    target = mission.targets["dig"]
+    snapshot.waypoints = [
+        Point(
+            x=target.position_m[0],
+            y=target.position_m[1],
+            z=target.position_m[2],
+        )
+    ]
     snapshot.waypoint_tolerance_m = 0.03
     snapshot.waypoint_dwell_s = 0.05
     snapshot.tracking_timeout_s = 2.0
@@ -304,7 +328,7 @@ def test_localhost_hold_to_jog_requires_heartbeat_and_release_ends_with_zero(
             time.sleep(0.05)
 
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="production",
         config_path=config_path,
@@ -414,6 +438,7 @@ def test_localhost_follow_recovers_from_one_missing_tip_and_ends_with_zero(
 ):
     _stub_policy(monkeypatch)
     config_path, mission_path, state_port, action_port = _write_fixture(tmp_path)
+    dig_target = load_mission(mission_path).targets["dig"].position_m
     action_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     action_socket.bind(("127.0.0.1", action_port))
     action_socket.settimeout(0.1)
@@ -444,7 +469,7 @@ def test_localhost_follow_recovers_from_one_missing_tip_and_ends_with_zero(
             time.sleep(0.05)
 
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="production",
         config_path=config_path,
@@ -470,7 +495,11 @@ def test_localhost_follow_recovers_from_one_missing_tip_and_ends_with_zero(
         pose = PoseStamped()
         pose.header = message.header
         pose.header.frame_id = "machine_root_ros"
-        pose.pose.position = Point(x=0.6, y=0.3, z=0.2)
+        pose.pose.position = Point(
+            x=dig_target[0],
+            y=dig_target[1],
+            z=dig_target[2],
+        )
         pose.pose.orientation.w = 1.0
         tip_publisher.publish(pose)
 
@@ -633,7 +662,7 @@ def test_localhost_follow_preserves_policy_output_until_supervision_is_lost(
         lambda _model_path: policy,
     )
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="production",
         config_path=config_path,
@@ -803,7 +832,7 @@ def test_commissioning_execute_dig_and_dump_accept_candidate_actions_and_end_wit
             time.sleep(0.05)
 
     context = rclpy.context.Context()
-    rclpy.init(context=context)
+    _init_isolated_ros_context(context)
     server = LiveMachineBehaviorNode(
         control_stage="commissioning",
         config_path=config_path,

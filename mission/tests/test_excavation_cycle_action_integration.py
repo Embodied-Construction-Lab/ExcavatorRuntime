@@ -26,6 +26,7 @@ class _ChildActions(Node):
     def __init__(self, *, context, fail_stage=""):
         super().__init__("excavation_cycle_children", context=context)
         self.calls = []
+        self.plan_target_stamps = []
         self.fail_stage = fail_stage
         self.servers = [
             ActionServer(self, Plan, "/planning/plan", execute_callback=self._plan),
@@ -41,6 +42,8 @@ class _ChildActions(Node):
 
     def _plan(self, handle):
         phase = handle.request.target.target_kind
+        stamp = handle.request.target.header.stamp
+        self.plan_target_stamps.append(stamp.sec + stamp.nanosec * 1e-9)
         stage = f"PLAN_{phase.upper()}"
         self.calls.append(stage)
         result = Plan.Result()
@@ -138,13 +141,16 @@ def test_cycle_runs_required_order_and_replans_dump_after_dig():
     harness = _harness()
     _, children, _, _, _, _, client = harness
     try:
+        started_at = time.monotonic()
         handle = _wait_future(client.send_goal_async(_goal()))
         assert handle.accepted
         wrapped = _wait_future(handle.get_result_async())
+        elapsed_s = time.monotonic() - started_at
         assert wrapped.status == GoalStatus.STATUS_SUCCEEDED
         assert wrapped.result.reason_code == "SUCCEEDED"
         assert wrapped.result.quiescence_confirmed
         assert wrapped.result.action_datagrams == 10
+        assert elapsed_s < 0.75
         assert children.calls == [
             "PLAN_DIG",
             "FOLLOW_DIG",
@@ -153,6 +159,8 @@ def test_cycle_runs_required_order_and_replans_dump_after_dig():
             "FOLLOW_DUMP",
             "EXECUTE_DUMP",
         ]
+        assert len(children.plan_target_stamps) == 2
+        assert all(stamp > 0.0 for stamp in children.plan_target_stamps)
     finally:
         _stop(harness)
 

@@ -52,11 +52,23 @@ RuntimeSnapshot safe_control_runtime()
   return runtime;
 }
 
+RuntimeSnapshot safe_edge_control_runtime()
+{
+  auto runtime = safe_control_runtime();
+  runtime.motion_backend = "orin_edge";
+  runtime.follow_control_mode = "edge_onnx";
+  runtime.manual_jog_ready = false;
+  return runtime;
+}
+
 TEST(PanelState, EnablesOnlyImplementedActionsWithSafeResources)
 {
   OperatorResources resources;
   resources.dig_target_available = true;
   resources.dump_target_available = true;
+  resources.execute_dig_available = true;
+  resources.execute_dump_available = true;
+  resources.full_mission_available = true;
   resources.home_pose_available = true;
 
   const auto view = derive_panel_view(
@@ -64,10 +76,11 @@ TEST(PanelState, EnablesOnlyImplementedActionsWithSafeResources)
 
   EXPECT_TRUE(view.plan_follow_dig_enabled);
   EXPECT_TRUE(view.plan_follow_dump_enabled);
-  EXPECT_TRUE(view.return_home_enabled);
-  EXPECT_FALSE(view.cancel_enabled);
   EXPECT_FALSE(view.execute_dig_enabled);
   EXPECT_FALSE(view.execute_dump_enabled);
+  EXPECT_FALSE(view.full_mission_enabled);
+  EXPECT_TRUE(view.return_home_enabled);
+  EXPECT_FALSE(view.cancel_enabled);
   EXPECT_EQ(view.safety_text, "FIXTURE / SHADOW / READY");
 }
 
@@ -123,6 +136,47 @@ TEST(PanelState, EnablesLiveActionsOnlyWhenEveryPcAndMachineGateIsReady)
   EXPECT_FALSE(view.plan_follow_dig_enabled);
   EXPECT_FALSE(view.execute_dig_enabled);
   EXPECT_EQ(view.safety_text, "LOCKED / MISSION_TARGETS_NOT_FIELD_VALIDATED");
+}
+
+TEST(PanelState, EnablesFollowWhenOrinOwnsOnnxAndThePhysicalCommandSink)
+{
+  OperatorResources resources;
+  resources.dig_target_available = true;
+  resources.dump_target_available = true;
+  resources.execute_dig_available = true;
+  resources.execute_dump_available = true;
+  resources.full_mission_available = true;
+
+  const auto view = derive_panel_view(
+    safe_edge_control_runtime(), resources, OwnedOperation::kIdle);
+
+  EXPECT_TRUE(view.plan_follow_dig_enabled);
+  EXPECT_TRUE(view.plan_follow_dump_enabled);
+  EXPECT_TRUE(view.execute_dig_enabled);
+  EXPECT_TRUE(view.execute_dump_enabled);
+  EXPECT_FALSE(view.full_mission_enabled);
+  EXPECT_FALSE(view.manual_jog_enabled);
+  EXPECT_EQ(view.safety_text, "LIVE / COMMISSIONING / READY");
+  EXPECT_EQ(view.follow_status_text, "ORIN EDGE FOLLOW / ONNX 100% / UNTIL RESULT OR CANCEL");
+}
+
+TEST(PanelState, ShowsActiveEdgeFollowAsBusyInsteadOfLockedReady)
+{
+  OperatorResources resources;
+  resources.dig_target_available = true;
+  resources.dump_target_available = true;
+  auto runtime = safe_edge_control_runtime();
+  runtime.quiescent = false;
+  runtime.active_behavior = "Follow";
+  runtime.motion_gate_reason = "behavior_active";
+
+  const auto view = derive_panel_view(
+    runtime, resources, OwnedOperation::kPlanFollow);
+
+  EXPECT_EQ(view.safety_text, "LIVE / BUSY / FOLLOW");
+  EXPECT_TRUE(view.cancel_enabled);
+  EXPECT_FALSE(view.plan_follow_dig_enabled);
+  EXPECT_FALSE(view.plan_follow_dump_enabled);
 }
 
 TEST(PanelState, EnablesManualJogWithoutPretendingMissionTargetsAreValidated)

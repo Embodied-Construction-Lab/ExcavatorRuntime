@@ -142,6 +142,27 @@ class FollowSessionTests(unittest.TestCase):
 
         snapshot.validate_for_execution(now_s=15.1, expected_control_stage="commissioning")
 
+    def test_execution_validation_allows_only_bounded_clock_skew(self):
+        snapshot = valid_snapshot(
+            planning_scope="execution_strict",
+            execution_eligible=True,
+            input_source="live",
+            map_source="live_local_map",
+            control_stage="commissioning",
+            workspace_constraint="disabled_by_operator",
+        )
+
+        snapshot.validate_for_execution(
+            now_s=9.8,
+            expected_control_stage="commissioning",
+        )
+
+        with self.assertRaisesRegex(ValueError, "from the future"):
+            snapshot.validate_for_execution(
+                now_s=9.4,
+                expected_control_stage="commissioning",
+            )
+
     def test_production_rejects_a_commissioning_workspace_trajectory(self):
         snapshot = valid_snapshot(
             planning_scope="execution_strict",

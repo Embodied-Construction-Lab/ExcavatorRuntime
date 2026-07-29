@@ -1,0 +1,37 @@
+{
+  "schema_version": "excavation_demo.v1",
+  "demo_id": "field_demo_001",
+  "frame_id": "machine_root_ros",
+  "target_status": "rviz_adjusted",
+  "dig_points": [
+    {
+      "point_id": "dig_01",
+      "position_m": [1.0, 0.3, 0.0],
+      "normal": [0.0, 0.0, 1.0],
+      "radius_m": 0.25
+    },
+    {
+      "point_id": "dig_02",
+      "position_m": [1.0, 0.1, 0.0],
+      "normal": [0.0, 0.0, 1.0],
+      "radius_m": 0.25
+    },
+    {
+      "point_id": "dig_03",
+      "position_m": [1.0, -0.1, 0.0],
+      "normal": [0.0, 0.0, 1.0],
+      "radius_m": 0.25
+    }
+  ],
+  "dump_target": {
+    "position_m": [-0.2, -1.4, 0.1],
+    "normal": [0.0, 0.0, 1.0],
+    "radius_m": 0.25
+  },
+  "limits": {
+    "waypoint_tolerance_m": 0.25,
+    "waypoint_dwell_s": 0.0,
+    "tracking_timeout_s": 60.0,
+    "settle_s": 0.5
+  }
+}

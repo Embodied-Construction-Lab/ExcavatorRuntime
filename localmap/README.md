@@ -83,6 +83,30 @@ localmap/scripts/run_planning_once.sh \
 `localmap/exports/live_validation/`，不生成 observation slice、不发送动作，也不授权
 真机运动。第一阶段 Mission shadow/replay 入口见 `mission/README.md`。
 
+## 为 Orin Shadow 准备严格轨迹
+
+PC 感知栈和 Orin Shadow 均稳定后，可冻结当前 LocalMap 与 Bucket Tip，生成一份
+`execution_strict` 轨迹及 SHA-256 交接清单：
+
+```bash
+localmap/scripts/prepare_orin_edge_trajectory.sh \
+  --mission mission/config/excavation_cycle.json \
+  --phase dump
+```
+
+输出位于：
+
+```text
+localmap/exports/live_latest/trajectory_command.simple_rrt.json
+localmap/exports/live_latest/orin_edge_trajectory_handoff.json
+```
+
+该入口不会连接 Orin、不会创建动作发送器，也不会复制文件。清单会校验 Mission
+来源、右手 `machine_root_ros`、执行资格、首路点与冻结铲尖距离、终点与 Mission
+目标距离以及轨迹 SHA。轨迹复制到 Orin 后仍须先重启 Orin Shadow 并检查审计日志；
+清单用于调试时核对轨迹来源和 SHA，不是 commissioning 阶段的额外运动门槛。
+清单生成成功本身也不向真机发送动作。
+
 ## 重要边界
 
 - `extrinsics_rslidar_to_machine_root_ros.derived.v1.json` 和右手 target/workspace 由旧
