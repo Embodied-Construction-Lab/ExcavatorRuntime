@@ -102,6 +102,11 @@ def write_profile_pair(project_root: Path, planning_data=None, perception_data=N
 
 
 class PlanningProfileTest(unittest.TestCase):
+    def test_deployed_profile_outputs_only_start_and_goal_waypoints(self):
+        profile = load_planning_profile()
+
+        self.assertEqual(profile.planner.waypoint_count, 2)
+
     def test_derives_shared_contract_from_perception_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)

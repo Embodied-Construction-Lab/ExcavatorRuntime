@@ -16,10 +16,12 @@ class SimpleBucketTipPlannerTest(unittest.TestCase):
             goal=np.array([1.0, 0.2, 0.0]),
             obstacles=[],
             bounds=PlanningBounds.from_values([-0.5, 1.5, 0.0, 1.0, -0.5, 0.5]),
+            waypoint_count=2,
             seed=7,
         )
 
         self.assertTrue(path.success)
+        self.assertEqual(len(path.waypoints), 2)
         np.testing.assert_allclose(path.waypoints[0], [0.0, 0.2, 0.0])
         np.testing.assert_allclose(path.waypoints[-1], [1.0, 0.2, 0.0])
         self.assertEqual(path.reason, "straight_line")
@@ -56,6 +58,31 @@ class SimpleBucketTipPlannerTest(unittest.TestCase):
             inside_y = 0.2 - 0.25 - 0.03 <= point[1] <= 0.2 + 0.25 + 0.03
             inside_z = -0.25 - 0.03 <= point[2] <= 0.25 + 0.03
             self.assertFalse(inside_x and inside_y and inside_z, point.tolist())
+
+    def test_endpoint_only_mode_rejects_a_blocked_straight_path(self):
+        obstacle = {
+            "id": "box_1",
+            "shape": "box",
+            "center_m": [0.5, 0.2, 0.0],
+            "size_m": [0.25, 0.5, 0.5],
+            "confidence": 1.0,
+        }
+
+        path = plan_bucket_tip_path(
+            start=np.array([0.0, 0.2, 0.0]),
+            goal=np.array([1.0, 0.2, 0.0]),
+            obstacles=[obstacle],
+            bounds=PlanningBounds.from_values(
+                [-0.2, 1.2, 0.0, 0.8, -0.8, 0.8]
+            ),
+            collision_radius_m=0.03,
+            edge_check_step_m=0.03,
+            waypoint_count=2,
+            seed=11,
+        )
+
+        self.assertFalse(path.success)
+        self.assertEqual(path.reason, "endpoint_only_path_blocked")
 
 
 if __name__ == "__main__":

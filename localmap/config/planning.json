@@ -24,7 +24,7 @@
     "goal_sample_rate": 0.15,
     "start_mask_radius_m": 0.15,
     "goal_mask_radius_m": 0.45,
-    "waypoint_count": 5,
+    "waypoint_count": 2,
     "seed": 8
   },
   "task_mode_by_target_kind": {
