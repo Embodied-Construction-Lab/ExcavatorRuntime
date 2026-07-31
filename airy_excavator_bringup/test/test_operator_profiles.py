@@ -32,13 +32,10 @@ def test_profiles_separate_input_provenance_from_motion_permission():
     assert commissioning.execution_mode == "control"
     assert commissioning.motion_backend == "orin_edge"
     assert commissioning.control_stage == "commissioning"
-    assert commissioning.start_live_control is False
     assert commissioning.start_orin_edge_gateway is True
 
-    production = resolve_profile("live_production")
-    assert production.control_stage == "production"
-    assert production.start_live_control is True
-    assert production.start_orin_edge_gateway is False
+    with pytest.raises(ValueError, match="unsupported operator profile"):
+        resolve_profile("live_production")
 
     with pytest.raises(ValueError, match="unsupported operator profile"):
         resolve_profile("live_motion")
@@ -63,7 +60,6 @@ def test_profiles_select_only_their_input_and_planning_adapters():
     assert commissioning.start_live_state_bridge is True
     assert commissioning.start_live_perception is True
     assert commissioning.start_live_planner is True
-    assert commissioning.start_live_control is False
     assert commissioning.start_orin_edge_gateway is True
 
 
@@ -102,7 +98,6 @@ def test_source_root_resolution_works_from_a_regular_install_prefix(tmp_path):
     (airy_root / "runtime_bridge" / "apps").mkdir(parents=True)
     (airy_root / "localmap" / "apps" / "perception").mkdir(parents=True)
     (airy_root / "runtime_bridge" / "apps" / "pc_runtime_bridge.py").touch()
-    (airy_root / "runtime_bridge" / "apps" / "live_machine_behavior_server.py").touch()
     (airy_root / "runtime_bridge" / "apps" / "orin_edge_follow_gateway.py").touch()
     (
         airy_root
@@ -113,7 +108,6 @@ def test_source_root_resolution_works_from_a_regular_install_prefix(tmp_path):
     ).touch()
     for relative in (
         "localmap/config/planning.json",
-        "runtime_bridge/config/runtime.json",
         "mission/config/excavation_cycle.json",
         "mission/config/excavation_demo.json",
         "kinematics/waji_description/urdf/waji.urdf",

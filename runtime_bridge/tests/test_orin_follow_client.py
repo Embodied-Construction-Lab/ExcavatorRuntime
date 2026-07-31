@@ -209,6 +209,88 @@ class OrinFollowClientTest(unittest.TestCase):
         ):
             client.run_fixed_action("ExecuteDump")
 
+    def test_fixed_action_default_silence_budget_tolerates_one_second_network_gap(self):
+        def handler(connection, server):
+            start = server.receive(connection)
+            common = {
+                "schema_version": "orin_behavior_rpc.v1",
+                "session_id": start["session_id"],
+                "request_id": start["request_id"],
+                "behavior": "ExecuteDig",
+            }
+            send_message(
+                connection,
+                {**common, "type": "accepted", "seq": 0},
+            )
+            time.sleep(1.1)
+            send_message(
+                connection,
+                {
+                    **common,
+                    "type": "result",
+                    "seq": 1,
+                    "outcome": "SUCCEEDED",
+                    "reason_code": "SEQUENCE_COMPLETED",
+                    "message": "ExecuteDig completed",
+                    "final_step_index": 2,
+                    "final_step_label": "lift_boom",
+                    "final_max_error": 0.0,
+                    "quiescence_confirmed": True,
+                    "action_datagrams": 12,
+                },
+            )
+
+        server = FakeBehaviorServer(handler)
+        self.addCleanup(server.close)
+        client = OrinFollowClient(server.host, server.port)
+
+        result = client.run_fixed_action("ExecuteDig")
+
+        self.assertEqual(result.outcome, "SUCCEEDED")
+        self.assertEqual(result.final_step_label, "lift_boom")
+
+    def test_silent_fixed_action_reports_last_received_event_context(self):
+        release = threading.Event()
+
+        def handler(connection, server):
+            start = server.receive(connection)
+            send_message(
+                connection,
+                {
+                    "schema_version": "orin_behavior_rpc.v1",
+                    "type": "accepted",
+                    "session_id": start["session_id"],
+                    "seq": 0,
+                    "request_id": start["request_id"],
+                    "behavior": "ExecuteDump",
+                },
+            )
+            release.wait(1.0)
+
+        server = FakeBehaviorServer(handler)
+        self.addCleanup(server.close)
+        self.addCleanup(release.set)
+        client = OrinFollowClient(
+            server.host,
+            server.port,
+            stream_silence_timeout_s=0.1,
+            poll_interval_s=0.01,
+        )
+
+        with self.assertRaises(OrinBehaviorConnectionError) as caught:
+            client.run_fixed_action("ExecuteDump")
+
+        diagnostic = str(caught.exception)
+        self.assertIn("Orin fixed-action stream was silent", diagnostic)
+        self.assertIn(f"endpoint={server.host}:{server.port}", diagnostic)
+        self.assertIn(f"session_id={client.session_id}", diagnostic)
+        self.assertIn("request_id=fixed-action-", diagnostic)
+        self.assertIn("behavior=ExecuteDump", diagnostic)
+        self.assertIn("accepted=true", diagnostic)
+        self.assertIn("last_event_type=accepted", diagnostic)
+        self.assertIn("last_event_seq=0", diagnostic)
+        self.assertIn("events_received=1", diagnostic)
+
     def test_start_follow_streams_feedback_until_quiescent_result(self):
         def handler(connection, server):
             start = server.receive(connection)
@@ -417,12 +499,19 @@ class OrinFollowClientTest(unittest.TestCase):
         )
 
         started_at = time.monotonic()
-        with self.assertRaisesRegex(
-            OrinBehaviorConnectionError, "silent"
-        ):
+        with self.assertRaises(OrinBehaviorConnectionError) as caught:
             client.run_follow({"trajectory_id": "trajectory-001"})
 
         self.assertLess(time.monotonic() - started_at, 0.5)
+        diagnostic = str(caught.exception)
+        self.assertIn("Orin Follow stream was silent", diagnostic)
+        self.assertIn(f"endpoint={server.host}:{server.port}", diagnostic)
+        self.assertIn(f"session_id={client.session_id}", diagnostic)
+        self.assertIn("request_id=follow-", diagnostic)
+        self.assertIn("accepted=false", diagnostic)
+        self.assertIn("last_event_type=none", diagnostic)
+        self.assertIn("last_event_seq=-1", diagnostic)
+        self.assertIn("events_received=0", diagnostic)
 
     def test_out_of_order_remote_event_is_rejected(self):
         def handler(connection, server):

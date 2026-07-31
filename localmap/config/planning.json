@@ -13,7 +13,7 @@
   },
   "obstacle_adapter": {
     "box_size_m": 0.2,
-    "max_obstacles": 1000
+    "max_obstacles": 0
   },
   "planner": {
     "execution_workspace_mode": "disabled_by_operator",

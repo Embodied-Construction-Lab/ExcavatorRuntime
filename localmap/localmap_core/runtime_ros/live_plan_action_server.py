@@ -46,7 +46,6 @@ from localmap_core.planning_inputs import LivePlanningInputs, load_live_planning
 from localmap_core.planning_profile import load_planning_profile
 from mission.contract import load_mission
 from mission.demo import load_demo_program
-from runtime_bridge.runtime_config import load_runtime_config
 from runtime_bridge.control_stage import CONTROL_STAGES, control_stage_policy
 
 
@@ -58,7 +57,6 @@ class LivePlanActionNode(Node):
         mission_path: FsPath,
         demo_path: FsPath | None = None,
         urdf_path: FsPath,
-        runtime_config_path: FsPath,
         control_stage: str,
         context=None,
     ) -> None:
@@ -66,20 +64,15 @@ class LivePlanActionNode(Node):
         self._profile = load_planning_profile(profile_path)
         self._mission = load_mission(mission_path)
         self._demo = load_demo_program(demo_path) if demo_path is not None else None
-        load_runtime_config(runtime_config_path)
         self._control_policy = control_stage_policy(control_stage)
         self._allowed_target_statuses = self._control_policy.allowed_target_statuses
         workspace_mode = self._profile.planner.execution_workspace_mode
-        if self._control_policy.require_field_validated_workspace and workspace_mode != "field_validated":
-            raise ValueError(
-                "production control requires a field_validated execution workspace"
-            )
         if workspace_mode == "field_validated":
             validate_execution_workspace_provenance(
                 json.loads(self._profile.inputs.reachable_workspace.read_text(encoding="utf-8")),
                 urdf_path.read_bytes(),
             )
-        elif not self._control_policy.require_field_validated_workspace:
+        else:
             self.get_logger().warning(
                 "COMMISSIONING: reachable workspace is diagnostic only; "
                 "planning remains global within configured planner bounds"
@@ -341,7 +334,6 @@ def main() -> None:
     parser.add_argument("--mission", type=FsPath, required=True)
     parser.add_argument("--demo", type=FsPath)
     parser.add_argument("--urdf", type=FsPath, required=True)
-    parser.add_argument("--runtime-config", type=FsPath, required=True)
     parser.add_argument("--control-stage", choices=CONTROL_STAGES, required=True)
     args = parser.parse_args()
     rclpy.init()
@@ -350,7 +342,6 @@ def main() -> None:
         mission_path=args.mission,
         demo_path=args.demo,
         urdf_path=args.urdf,
-        runtime_config_path=args.runtime_config,
         control_stage=args.control_stage,
     )
     executor = MultiThreadedExecutor(num_threads=4)

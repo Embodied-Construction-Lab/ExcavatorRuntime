@@ -1,4 +1,4 @@
-"""Unified PC operator launch for fixture, live shadow and gated live control."""
+"""Unified PC operator launch for fixture, live shadow and Orin Edge control."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,7 +36,6 @@ class OperatorProfile:
     start_live_state_bridge: bool
     start_live_perception: bool
     start_live_planner: bool
-    start_live_control: bool
     start_orin_edge_gateway: bool
 
 
@@ -53,7 +52,6 @@ _PROFILES = {
         start_live_state_bridge=False,
         start_live_perception=False,
         start_live_planner=False,
-        start_live_control=False,
         start_orin_edge_gateway=False,
     ),
     "live_shadow": OperatorProfile(
@@ -68,7 +66,6 @@ _PROFILES = {
         start_live_state_bridge=True,
         start_live_perception=True,
         start_live_planner=False,
-        start_live_control=False,
         start_orin_edge_gateway=False,
     ),
     "live_commissioning": OperatorProfile(
@@ -83,23 +80,7 @@ _PROFILES = {
         start_live_state_bridge=True,
         start_live_perception=True,
         start_live_planner=True,
-        start_live_control=False,
         start_orin_edge_gateway=True,
-    ),
-    "live_production": OperatorProfile(
-        name="live_production",
-        input_source="live",
-        execution_mode="control",
-        motion_backend="udp_policy",
-        control_stage="production",
-        enable_embedded_joint_tests=False,
-        namespace="",
-        start_fixture_planner=False,
-        start_live_state_bridge=False,
-        start_live_perception=True,
-        start_live_planner=True,
-        start_live_control=True,
-        start_orin_edge_gateway=False,
     ),
 }
 
@@ -135,12 +116,10 @@ _OFFLINE_REMAPPINGS = (
 
 _LIVE_ADAPTER_PATHS = (
     Path("runtime_bridge/apps/pc_runtime_bridge.py"),
-    Path("runtime_bridge/apps/live_machine_behavior_server.py"),
     Path("runtime_bridge/apps/orin_edge_follow_gateway.py"),
     Path("localmap/apps/perception/run_perception_stack.sh"),
     Path("localmap/localmap_core/runtime_ros/live_plan_action_server.py"),
     Path("localmap/config/planning.json"),
-    Path("runtime_bridge/config/runtime.json"),
     Path("mission/config/excavation_cycle.json"),
     Path("mission/config/excavation_demo.json"),
     Path("kinematics/waji_description/urdf/waji.urdf"),
@@ -244,8 +223,6 @@ def _live_adapter_processes(
                 str(airy_root / "mission/config/excavation_demo.json"),
                 "--urdf",
                 str(airy_root / "kinematics/waji_description/urdf/waji.urdf"),
-                "--runtime-config",
-                str(airy_root / "runtime_bridge/config/runtime.json"),
                 "--control-stage",
                 profile.control_stage,
             ],
@@ -254,29 +231,6 @@ def _live_adapter_processes(
         )
         entities.extend(
             [planner_process, _required_process(planner_process, "required live Plan server exited")]
-        )
-    if profile.start_live_control:
-        runtime_python = airy_root / ".venv_runtime/bin/python"
-        if not runtime_python.is_file():
-            raise RuntimeError(f"live control Python is missing: {runtime_python}")
-        control_process = ExecuteProcess(
-            cmd=[
-                str(runtime_python),
-                str(airy_root / "runtime_bridge/apps/live_machine_behavior_server.py"),
-                "--config",
-                str(airy_root / "runtime_bridge/config/runtime.json"),
-                "--mission",
-                str(airy_root / "mission/config/excavation_cycle.json"),
-                "--motion-authorization",
-                "ALLOW_LIVE_MACHINE_MOTION",
-                "--control-stage",
-                profile.control_stage,
-            ],
-            cwd=str(airy_root),
-            output="screen",
-        )
-        entities.extend(
-            [control_process, _required_process(control_process, "required live Command Sink exited")]
         )
     if profile.start_orin_edge_gateway:
         gateway_process = ExecuteProcess(
@@ -296,19 +250,19 @@ def _live_adapter_processes(
             output="screen",
         )
         entities.extend(
-            [gateway_process, _required_process(
-                gateway_process, "required Orin Edge Follow Gateway exited")]
+            [
+                gateway_process,
+                _required_process(
+                    gateway_process, "required Orin Edge Follow Gateway exited"
+                ),
+            ]
         )
     entities.append(
         LogInfo(
             msg=(
-                f"live_{profile.control_stage}: execution-strict Plan + one authorized UDP Command Sink"
-                if profile.start_live_control
-                else (
-                    f"live_{profile.control_stage}: PC Plan + Orin Edge ONNX Follow"
-                    if profile.start_orin_edge_gateway
-                    else "live_shadow: live state/FK/perception with NoMotionBackend"
-                )
+                f"live_{profile.control_stage}: PC Plan + Orin Edge ONNX Follow"
+                if profile.start_orin_edge_gateway
+                else "live_shadow: live state/FK/perception with NoMotionBackend"
             )
         )
     )
@@ -321,7 +275,7 @@ def _launch_profile(context):
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
     authorization = LaunchConfiguration("motion_authorization").perform(context)
-    motion_profile = profile.start_live_control or profile.start_orin_edge_gateway
+    motion_profile = profile.start_orin_edge_gateway
     if motion_profile and authorization != "ALLOW_LIVE_MACHINE_MOTION":
         raise RuntimeError(
             f"live_{profile.control_stage} requires motion_authorization:=ALLOW_LIVE_MACHINE_MOTION"
@@ -347,7 +301,6 @@ def _launch_profile(context):
         profile.start_live_state_bridge
         or profile.start_live_perception
         or profile.start_live_planner
-        or profile.start_live_control
         or profile.start_orin_edge_gateway
     ):
         airy_root = resolve_airy_root(
@@ -369,7 +322,7 @@ def _launch_profile(context):
     entities.append(_include_launch("waji_description", "display.launch.py"))
     if profile.start_fixture_planner:
         entities.append(_include_launch("airy_localmap", "fixture_planning.launch.py"))
-    if not profile.start_live_control and not profile.start_orin_edge_gateway:
+    if not profile.start_orin_edge_gateway:
         entities.append(
             _include_launch(
                 "airy_mission_runtime",
@@ -404,7 +357,6 @@ def _launch_profile(context):
                             profile.start_live_state_bridge
                             or profile.start_live_perception
                             or profile.start_live_planner
-                            or profile.start_live_control
                             or profile.start_orin_edge_gateway
                         )
                         else Path(get_package_share_directory("airy_mission_runtime"))
@@ -419,7 +371,6 @@ def _launch_profile(context):
                             profile.start_live_state_bridge
                             or profile.start_live_perception
                             or profile.start_live_planner
-                            or profile.start_live_control
                             or profile.start_orin_edge_gateway
                         )
                         else []
@@ -452,8 +403,7 @@ def generate_launch_description():
                 "profile",
                 default_value="fixture_shadow",
                 description=(
-                    "Operator profile: fixture_shadow, live_shadow, "
-                    "live_commissioning, or live_production."
+                    "Operator profile: fixture_shadow, live_shadow, or live_commissioning."
                 ),
             ),
             DeclareLaunchArgument(

@@ -35,13 +35,6 @@ void ExcavationPanel::createRosInterfaces()
     rclcpp_action::create_client<ExcavationCycle>(node_, "/mission/run_cycle");
   return_home_client_ =
     rclcpp_action::create_client<ReturnHome>(node_, "/excavator/return_home");
-  hold_to_jog_client_ =
-    rclcpp_action::create_client<HoldToJog>(node_, "/excavator/hold_to_jog");
-  jog_heartbeat_publisher_ = node_->create_publisher<
-    airy_excavator_interfaces::msg::JogHeartbeat>("/excavator/jog_heartbeat", 10);
-  operator_heartbeat_publisher_ = node_->create_publisher<
-    airy_excavator_interfaces::msg::OperatorHeartbeat>(
-    "/excavator/operator_heartbeat", 10);
 
   auto latched_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
   status_subscription_ = node_->create_subscription<
@@ -71,13 +64,7 @@ void ExcavationPanel::createRosInterfaces()
       runtime_.estop = message->estop;
       runtime_.fault_free = message->fault_free;
       runtime_.fixed_actions_validated = message->fixed_actions_validated;
-      runtime_.manual_jog_ready = message->manual_jog_ready;
       runtime_.follow_control_mode = message->follow_control_mode;
-      runtime_.follow_speed_fraction = message->follow_speed_fraction;
-      runtime_.follow_allowed_actuators = message->follow_allowed_actuators;
-      runtime_.follow_max_motion_ms = message->follow_max_motion_ms;
-      runtime_.follow_canary_ready = message->follow_canary_ready;
-      runtime_.follow_supervision_active = message->follow_supervision_active;
       runtime_.motion_gate_reason = message->motion_gate_reason;
       runtime_.last_rejection_reason = message->last_rejection_reason;
       runtime_.last_rejection_message = message->last_rejection_message;
@@ -223,26 +210,6 @@ void ExcavationPanel::refreshJointTestControls(const RuntimeSnapshot & runtime)
       QString("READY / simulated %1 / published=%2")
       .arg(QString::fromStdString(joint_test_publisher_->get_topic_name()))
       .arg(joint_test_publish_count_));
-  }
-}
-
-void ExcavationPanel::refreshManualJogControls(const PanelView & view)
-{
-  bool jog_active = false;
-  {
-    std::scoped_lock lock(mutex_);
-    jog_active = owned_operation_ == OwnedOperation::kManualJog;
-    if (!jog_active) {active_manual_jog_button_ = nullptr;}
-  }
-  for (auto * button : manual_jog_buttons_) {
-    button->setEnabled(jog_active ? button == active_manual_jog_button_ : view.manual_jog_enabled);
-  }
-  if (jog_active) {
-    manual_jog_status_label_->setText("ACTIVE / keep holding; release or focus loss sends zero");
-  } else if (view.manual_jog_enabled) {
-    manual_jog_status_label_->setText(QString::fromStdString(view.manual_jog_status_text));
-  } else {
-    manual_jog_status_label_->setText(QString::fromStdString(view.manual_jog_status_text));
   }
 }
 

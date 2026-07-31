@@ -31,32 +31,20 @@ PanelView derive_panel_view(
     !runtime.motion_authorized && !runtime.sender_constructed &&
     runtime.quiescent && runtime.action_datagrams == 0 &&
     runtime.active_behavior.empty();
-  const bool supported_control_backend =
-    runtime.motion_backend == "udp_policy" || runtime.motion_backend == "orin_edge";
   const bool safe_control =
     runtime.received && runtime.fresh && runtime.input_source == "live" &&
-    runtime.execution_mode == "control" && supported_control_backend &&
+    runtime.execution_mode == "control" && runtime.motion_backend == "orin_edge" &&
+    runtime.control_stage == "commissioning" &&
     runtime.motion_authorized && runtime.sender_constructed && runtime.quiescent &&
     runtime.state_fresh && runtime.control_enabled && runtime.sensor_valid &&
     runtime.stm32_alive && !runtime.estop && runtime.fault_free &&
     runtime.motion_gate_reason == "ready" &&
     runtime.active_behavior.empty();
-  const bool supervised_canary =
-    runtime.follow_control_mode == "supervised_canary";
   const bool orin_edge_follow =
     runtime.motion_backend == "orin_edge" && runtime.follow_control_mode == "edge_onnx";
-  const bool safe_follow_control =
-    safe_control &&
-    ((supervised_canary && runtime.follow_canary_ready) || orin_edge_follow);
-  const bool safe_fixed_control =
-    safe_control &&
-    (runtime.motion_backend == "udp_policy" || runtime.motion_backend == "orin_edge") &&
-    (runtime.control_stage == "commissioning" ||
-    (runtime.control_stage == "production" && runtime.fixed_actions_validated));
-  const bool safe_full_mission_control =
-    safe_control && runtime.motion_backend == "udp_policy" &&
-    runtime.control_stage == "production" &&
-    runtime.fixed_actions_validated;
+  const bool safe_follow_control = safe_control && orin_edge_follow;
+  const bool safe_fixed_control = safe_control;
+  const bool safe_full_mission_control = safe_control;
   const bool idle = owned_operation == OwnedOperation::kIdle;
 
   view.plan_follow_dig_enabled =
@@ -73,46 +61,10 @@ PanelView derive_panel_view(
     safe_full_mission_control && idle && resources.full_mission_available;
   if (orin_edge_follow) {
     view.follow_status_text = "ORIN EDGE FOLLOW / ONNX 100% / UNTIL RESULT OR CANCEL";
-  } else if (supervised_canary) {
-    std::ostringstream status;
-    status << "SUPERVISED FOLLOW / ONNX 100% / ";
-    for (std::size_t index = 0; index < runtime.follow_allowed_actuators.size(); ++index) {
-      if (index > 0) {status << ',';}
-      auto actuator = runtime.follow_allowed_actuators[index];
-      std::transform(
-        actuator.begin(), actuator.end(), actuator.begin(),
-        [](unsigned char character) {return std::toupper(character);});
-      status << actuator;
-    }
-    status << " / UNTIL RESULT OR CANCEL";
-    view.follow_status_text = status.str();
   } else if (safe_shadow) {
     view.follow_status_text = "SHADOW / NO MOTION";
   } else {
     view.follow_status_text = "FOLLOW LOCKED";
-  }
-  view.manual_jog_enabled =
-    runtime.received && runtime.fresh && runtime.input_source == "live" &&
-    runtime.execution_mode == "control" && runtime.motion_backend == "udp_policy" &&
-    runtime.motion_authorized && runtime.sender_constructed && runtime.quiescent &&
-    runtime.state_fresh && runtime.control_enabled && runtime.sensor_valid &&
-    runtime.stm32_alive && !runtime.estop && runtime.fault_free &&
-    runtime.manual_jog_ready && runtime.active_behavior.empty() && idle &&
-    resources.manual_jog_available;
-  if (view.manual_jog_enabled) {
-    view.manual_jog_status_text =
-      "READY / bounded low speed, endpoint margin, heartbeat and max hold / no swing";
-  } else if (!runtime.last_rejection_reason.empty()) {
-    view.manual_jog_status_text = "LOCKED / " + runtime.last_rejection_reason;
-    if (!runtime.last_rejection_message.empty()) {
-      view.manual_jog_status_text += " / " + runtime.last_rejection_message;
-    }
-  } else if (!resources.manual_jog_available) {
-    view.manual_jog_status_text = "LOCKED / HOLD_TO_JOG_ACTION_UNAVAILABLE";
-  } else if (!runtime.motion_gate_reason.empty()) {
-    view.manual_jog_status_text = "LOCKED / " + runtime.motion_gate_reason;
-  } else {
-    view.manual_jog_status_text = "LOCKED / live-control safety contract not satisfied";
   }
   view.cancel_enabled = !idle;
 

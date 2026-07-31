@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from runtime_bridge.apps.inspect_orin_packets import extract_machine_state_packets, format_machine_state_packet
+from runtime_bridge.apps.mock_orin_relay import build_arg_parser as build_mock_orin_parser
 from runtime_bridge.apps.pc_runtime_bridge import (
     JointStatePublisher,
     build_arg_parser,
@@ -61,11 +62,17 @@ class RuntimeAppsTest(unittest.TestCase):
 
         self.assertEqual(
             set(vars(defaults)),
-            {"config", "reply_zero", "publish_joint_states", "print_every"},
+            {"config", "publish_joint_states", "print_every"},
         )
-        self.assertFalse(defaults.reply_zero)
         self.assertIsNone(defaults.print_every)
-        self.assertTrue(parser.parse_args(["--reply-zero"]).reply_zero)
+
+    def test_mock_orin_relay_is_state_only(self):
+        defaults = build_mock_orin_parser().parse_args([])
+
+        self.assertEqual(
+            set(vars(defaults)),
+            {"pc_host", "state_port", "rate_hz"},
+        )
 
     def test_shipped_mock_config_uses_loopback_network(self):
         config = load_runtime_config(
@@ -73,7 +80,6 @@ class RuntimeAppsTest(unittest.TestCase):
         )
 
         self.assertEqual(config.network.state_endpoint, ("127.0.0.1", 18081))
-        self.assertEqual(config.network.action_endpoint, ("127.0.0.1", 18082))
 
     def test_packet_inspector_extracts_and_formats_machine_state_from_tcpdump_text(self):
         capture = (

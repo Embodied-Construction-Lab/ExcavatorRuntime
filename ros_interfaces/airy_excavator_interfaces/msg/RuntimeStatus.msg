@@ -14,13 +14,7 @@ bool stm32_alive
 bool estop
 bool fault_free
 bool fixed_actions_validated
-bool manual_jog_ready
 string follow_control_mode
-float32 follow_speed_fraction
-string[] follow_allowed_actuators
-uint32 follow_max_motion_ms
-bool follow_canary_ready
-bool follow_supervision_active
 string motion_gate_reason
 string active_behavior
 string last_rejection_reason

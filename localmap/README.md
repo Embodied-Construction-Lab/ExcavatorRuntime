@@ -2,8 +2,8 @@
 
 唯一 ROS 坐标根为 `machine_root_ros`：`+X` 前、`+Y` 左、`+Z` 上。雷达、FK、
 LocalMap、workspace、轨迹和 RViz 都使用该坐标系。Unity 左手 `machine_root` 不在
-ROS TF 或 LocalMap JSON 中出现；它只在 `runtime_bridge/unity_observation_adapter.py`
-组装 ONNX 38 维 observation 时转换。
+ROS TF 或 LocalMap JSON 中出现；Unity 坐标与 38 维 Observation 的适配只在 Orin
+Execution Runtime 内完成。
 
 ## 启动
 

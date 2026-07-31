@@ -24,7 +24,7 @@ RuntimeSnapshot safe_runtime()
   return runtime;
 }
 
-RuntimeSnapshot safe_control_runtime()
+RuntimeSnapshot safe_edge_control_runtime()
 {
   RuntimeSnapshot runtime;
   runtime.received = true;
@@ -32,7 +32,7 @@ RuntimeSnapshot safe_control_runtime()
   runtime.input_source = "live";
   runtime.execution_mode = "control";
   runtime.control_stage = "commissioning";
-  runtime.motion_backend = "udp_policy";
+  runtime.motion_backend = "orin_edge";
   runtime.motion_authorized = true;
   runtime.sender_constructed = true;
   runtime.quiescent = true;
@@ -43,21 +43,7 @@ RuntimeSnapshot safe_control_runtime()
   runtime.fault_free = true;
   runtime.motion_gate_reason = "ready";
   runtime.fixed_actions_validated = true;
-  runtime.manual_jog_ready = true;
-  runtime.follow_control_mode = "supervised_canary";
-  runtime.follow_speed_fraction = 1.0;
-  runtime.follow_allowed_actuators = {"boom", "stick", "bucket", "swing"};
-  runtime.follow_max_motion_ms = 0;
-  runtime.follow_canary_ready = true;
-  return runtime;
-}
-
-RuntimeSnapshot safe_edge_control_runtime()
-{
-  auto runtime = safe_control_runtime();
-  runtime.motion_backend = "orin_edge";
   runtime.follow_control_mode = "edge_onnx";
-  runtime.manual_jog_ready = false;
   return runtime;
 }
 
@@ -84,7 +70,7 @@ TEST(PanelState, EnablesOnlyImplementedActionsWithSafeResources)
   EXPECT_EQ(view.safety_text, "FIXTURE / SHADOW / READY");
 }
 
-TEST(PanelState, EnablesLiveActionsOnlyWhenEveryPcAndMachineGateIsReady)
+TEST(PanelState, EnablesFinalLiveActionsOnlyWhenOrinEdgeIsReady)
 {
   OperatorResources resources;
   resources.dig_target_available = true;
@@ -93,44 +79,25 @@ TEST(PanelState, EnablesLiveActionsOnlyWhenEveryPcAndMachineGateIsReady)
   resources.execute_dump_available = true;
   resources.full_mission_available = true;
 
-  auto runtime = safe_control_runtime();
+  auto runtime = safe_edge_control_runtime();
   runtime.fixed_actions_validated = false;
   auto view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
   EXPECT_TRUE(view.plan_follow_dig_enabled);
   EXPECT_TRUE(view.plan_follow_dump_enabled);
   EXPECT_TRUE(view.execute_dig_enabled);
   EXPECT_TRUE(view.execute_dump_enabled);
-  EXPECT_FALSE(view.full_mission_enabled);
+  EXPECT_TRUE(view.full_mission_enabled);
   EXPECT_EQ(view.safety_text, "LIVE / COMMISSIONING / READY");
   EXPECT_EQ(
     view.follow_status_text,
-    "SUPERVISED FOLLOW / ONNX 100% / BOOM,STICK,BUCKET,SWING / UNTIL RESULT OR CANCEL");
-
-  runtime = safe_control_runtime();
-  runtime.control_stage = "production";
-  view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
-  EXPECT_TRUE(view.execute_dig_enabled);
-  EXPECT_TRUE(view.execute_dump_enabled);
-  EXPECT_TRUE(view.full_mission_enabled);
-
-  runtime.fixed_actions_validated = false;
-  view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
-  EXPECT_FALSE(view.execute_dig_enabled);
-  EXPECT_FALSE(view.execute_dump_enabled);
-  EXPECT_FALSE(view.full_mission_enabled);
-
-  runtime = safe_control_runtime();
-  runtime.follow_canary_ready = false;
-  view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
-  EXPECT_FALSE(view.plan_follow_dig_enabled);
-  EXPECT_FALSE(view.plan_follow_dump_enabled);
+    "ORIN EDGE FOLLOW / ONNX 100% / UNTIL RESULT OR CANCEL");
 
   runtime.control_enabled = false;
   view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
   EXPECT_FALSE(view.plan_follow_dig_enabled);
   EXPECT_FALSE(view.execute_dig_enabled);
 
-  runtime = safe_control_runtime();
+  runtime = safe_edge_control_runtime();
   runtime.motion_gate_reason = "mission_targets_not_field_validated";
   view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
   EXPECT_FALSE(view.plan_follow_dig_enabled);
@@ -138,7 +105,7 @@ TEST(PanelState, EnablesLiveActionsOnlyWhenEveryPcAndMachineGateIsReady)
   EXPECT_EQ(view.safety_text, "LOCKED / MISSION_TARGETS_NOT_FIELD_VALIDATED");
 }
 
-TEST(PanelState, EnablesFollowWhenOrinOwnsOnnxAndThePhysicalCommandSink)
+TEST(PanelState, RejectsTheRetiredPcUdpPolicyBackend)
 {
   OperatorResources resources;
   resources.dig_target_available = true;
@@ -147,17 +114,16 @@ TEST(PanelState, EnablesFollowWhenOrinOwnsOnnxAndThePhysicalCommandSink)
   resources.execute_dump_available = true;
   resources.full_mission_available = true;
 
-  const auto view = derive_panel_view(
-    safe_edge_control_runtime(), resources, OwnedOperation::kIdle);
+  auto runtime = safe_edge_control_runtime();
+  runtime.motion_backend = "udp_policy";
+  const auto view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
 
-  EXPECT_TRUE(view.plan_follow_dig_enabled);
-  EXPECT_TRUE(view.plan_follow_dump_enabled);
-  EXPECT_TRUE(view.execute_dig_enabled);
-  EXPECT_TRUE(view.execute_dump_enabled);
+  EXPECT_FALSE(view.plan_follow_dig_enabled);
+  EXPECT_FALSE(view.plan_follow_dump_enabled);
+  EXPECT_FALSE(view.execute_dig_enabled);
+  EXPECT_FALSE(view.execute_dump_enabled);
   EXPECT_FALSE(view.full_mission_enabled);
-  EXPECT_FALSE(view.manual_jog_enabled);
-  EXPECT_EQ(view.safety_text, "LIVE / COMMISSIONING / READY");
-  EXPECT_EQ(view.follow_status_text, "ORIN EDGE FOLLOW / ONNX 100% / UNTIL RESULT OR CANCEL");
+  EXPECT_EQ(view.safety_text, "LOCKED / READY");
 }
 
 TEST(PanelState, ShowsActiveEdgeFollowAsBusyInsteadOfLockedReady)
@@ -177,41 +143,6 @@ TEST(PanelState, ShowsActiveEdgeFollowAsBusyInsteadOfLockedReady)
   EXPECT_TRUE(view.cancel_enabled);
   EXPECT_FALSE(view.plan_follow_dig_enabled);
   EXPECT_FALSE(view.plan_follow_dump_enabled);
-}
-
-TEST(PanelState, EnablesManualJogWithoutPretendingMissionTargetsAreValidated)
-{
-  OperatorResources resources;
-  resources.manual_jog_available = true;
-  auto runtime = safe_control_runtime();
-  runtime.motion_gate_reason = "mission_targets_not_field_validated";
-
-  auto view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
-
-  EXPECT_FALSE(view.plan_follow_dig_enabled);
-  EXPECT_TRUE(view.manual_jog_enabled);
-
-  runtime.manual_jog_ready = false;
-  view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
-  EXPECT_FALSE(view.manual_jog_enabled);
-}
-
-TEST(PanelState, ShowsTheExactLiveRejectionInManualJogStatus)
-{
-  OperatorResources resources;
-  resources.manual_jog_available = true;
-  auto runtime = safe_control_runtime();
-  runtime.manual_jog_ready = false;
-  runtime.motion_gate_reason = "state_stale";
-  runtime.last_rejection_reason = "JOG_HEARTBEAT_MISSING";
-  runtime.last_rejection_message = "fresh matching jog heartbeat is required";
-
-  const auto view = derive_panel_view(runtime, resources, OwnedOperation::kIdle);
-
-  EXPECT_FALSE(view.manual_jog_enabled);
-  EXPECT_EQ(
-    view.manual_jog_status_text,
-    "LOCKED / JOG_HEARTBEAT_MISSING / fresh matching jog heartbeat is required");
 }
 
 TEST(PanelState, FailsClosedWithoutFreshSafeRuntime)

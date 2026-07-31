@@ -103,28 +103,17 @@ motion_gate_reason=ready
 `ReturnHome` 仍未迁移。`Full Mission` 已由 PC 调度现有的端侧
 `Follow`、`ExecuteDig` 和 `ExecuteDump`，不新增动作发送链路。
 
-所有几何、目标和可达域证据完成后，改用严格入口：
-
-```bash
-ros2 launch airy_excavator_bringup operator.launch.py \
-  profile:=live_production \
-  motion_authorization:=ALLOW_LIVE_MACHINE_MOTION
-```
-
-`live_production` 会重新强制执行器位置范围、`field_validated` Mission target 和
-`field_validated` execution workspace。它目前仍是旧 PC Command Sink 路径，仅作为未完成迁移的
-历史入口；端侧 Follow 联调只能使用 `live_commissioning`，两种 control profile 禁止同时启动。
-旧 `live_control` profile 已删除，避免同一名称同时代表联调与生产。
+`live_commissioning` 是唯一真机 Operator profile，也是经过现场验证的最终运行入口。
+旧 `live_production`、`live_control` 和 PC `udp_policy` 执行路线均已删除，不提供别名或兼容回退。
+规划产生完整 Trajectory Snapshot，Orin 独占 ONNX/fixed action 高频闭环与 STM32 Command Sink。
 
 不要在这些命令前设置 DDS Domain 环境变量。当前仓库保留两类证据状态：
 
 - `mission/config/excavation_cycle.json` 当前保存本轮现场 RViz 核对后的 `rviz_adjusted` dig/dump
   坐标，只允许 `live_commissioning` 使用；移动挖机、雷达或作业区后必须重新核对并更新状态；
-- `runtime_bridge/config/fixed_actions.json` 仍是 `candidate`，且由 runtime config 固定整文件 SHA；
-  没有完整现场证据时不能成为 `field_validated`。
+- Orin 本地 fixed action profile 及其 digest 由 `excavator-orin-runtime` 管理，PC 只发送行为名称。
 
-`placeholder` 会锁定 Follow；当前仓库基线已经由操作者升级为 `rviz_adjusted`，因此会解锁
-commissioning Follow，但 production 仍只接受 `field_validated`。当前端侧
+`placeholder` 会锁定 Follow；当前仓库基线已经由操作者升级为 `rviz_adjusted`。当前端侧
 `live_commissioning` 开放 `Plan + Follow DIG/DUMP` 和独立
 `ExecuteDig/ExecuteDump`。固定动作与 Follow 互斥，取消、失败、超时和完成均由 Orin
 先发送终态零命令。`ReturnHome` 要等对应 Orin 行为接口迁移后再启用。
@@ -161,30 +150,14 @@ ros2 run airy_mission_runtime run_excavation_demo \
 等待 `FollowDig → Dig → FollowDump → Dump` 返回成功且确认静止后再提交下一个；任一步拒绝、
 失败、超时或取消都会停止演示，不会跳过失败点继续运动。
 
-旧 PC `udp_policy` backend 的 Panel → Tests 中提供 boom/stick/bucket 三轴
-`Action − / Action +` Hold-to-Jog：按住才发送单轴命令，松开或 RViz 失焦立即取消；
-它不是当前 Orin Edge commissioning 路径的一部分。Panel 心跳丢失、Machine State 过期、
-安全状态关闭或达到最长按住时间时，旧 PC Command Sink 自动发送终态零命令。
-速度比例、周期、心跳和最长按住时间只从 `runtime_bridge/config/runtime.json` 的
-`manual_jog` section 读取。当前 live 配置把单次硬上限固定为 `1000 ms`；Panel 会直接
-显示服务端的精确拒绝原因，并在 Result 中保留拉线长度 `before / after / delta`。Swing 因现场
-速度/限位尚未验证，不在该诊断入口开放。
-
-旧 PC Follow supervision 的参数只来自 `runtime.json` 的 `follow_control`：在
-`live_production` 中 Panel 点击 `Plan + Follow`
-后会在操作期间自动维持 175 ms 租约心跳，操作结束后恢复按钮。ONNX 的四轴 `[-1,1]` 输出不做
-轴屏蔽或符号变换，只按 `machine_profile.json` 的正/负速度幅值转换为 m/s、rad/s；STM32 负责真机
-低层方向适配。Command Sink 仍以保持 ONNX 符号的完整方向性物理包络二次校验。Follow 持续到轨迹
-到达、轨迹自身 timeout、操作者取消、安全状态关闭或监督心跳
-丢失；不再使用与任务无关的一秒总时长上限。Machine State 新鲜度门限为配置化的 500 ms，以容纳
-现场 8–10 Hz 状态流的正常调度抖动；Orin 对每条动作仍执行独立 100 ms lease。每次策略决策记录到
-`runtime_bridge/exports/action_journal/follow_canary/`，最新 38 维观测、原始/应用后动作和物理命令写入
-`runtime_bridge/exports/latest_observation.json`。Panel 顶部会明确显示
-`LIVE / COMMISSIONING / READY` 或 `LIVE / PRODUCTION / READY`，避免把联调状态误认为生产准入。
+Panel → Tests 只保留离线 JointState 滑块；它在 live profile 中被禁用，不发送真机动作。
+ONNX 的四轴 `[-1,1]` 输出、38 维 Observation、waypoint 推进和 fixed action 都由 Orin
+在本地执行并记录。PC 不缩放、不取反，也不发送连续 Physical Velocity Command。
+Panel 顶部以 `LIVE / COMMISSIONING / READY` 表示唯一真机路线已经就绪。
 
 当前端侧 commissioning 既可分段验证 `Plan + Follow DIG`、`ExecuteDig`、
 `Plan + Follow DUMP` 和 `ExecuteDump`，也可使用上述多点演示命令调用同一组 Action。
-Panel 的 `Full Mission` 按钮暂未作为 commissioning 入口开放。
+Panel 的 `Full Mission` 与分段按钮调用同一组 Orin Edge Action。
 实现与离线证据见
 `EvaluationReport/2026-07-26_pc_plan_orin_edge_follow_implementation.md`。
 
@@ -439,13 +412,13 @@ ros2 bag play bags/airy_repositioned_20260707_152018 --loop
 
 ## 7. 可选：本机模拟 Orin 中转
 
-终端 1，启动 PC 通信诊断入口：
+终端 1，启动 PC 只读状态桥：
 
 ```bash
 cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
 python3 runtime_bridge/apps/pc_runtime_bridge.py \
   --config runtime_bridge/config/runtime.mock.json \
-  --reply-zero
+  --publish-joint-states
 ```
 
 终端 2，启动 mock Orin relay：
@@ -453,12 +426,6 @@ python3 runtime_bridge/apps/pc_runtime_bridge.py \
 ```bash
 cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
 python3 runtime_bridge/apps/mock_orin_relay.py
-```
-
-如果要把 Orin 状态发布成 ROS2 `/joint_states`，PC 侧加：
-
-```bash
---publish-joint-states
 ```
 
 现场只接收状态并发布 `/joint_states`，同时每 100 个有效状态包打印一次：
@@ -473,93 +440,13 @@ python3 runtime_bridge/apps/mock_orin_relay.py
 `runtime_bridge/config/runtime.json` 的 `diagnostics.print_every`。该参数不改变接收、记录或
 `/joint_states` 发布频率。
 
-连接真实 Orin 时，PC 侧使用：
+真实 Orin 下不需要另启这个脚本；`operator.launch.py profile:=live_commissioning`
+已经启动接收状态、发布 `/joint_states` 的 PC bridge，以及唯一的 Orin Edge Action Gateway。
+PC bridge 是严格只读的：不加载 ONNX、不生成动作、不打开到 Orin 18082 的 UDP sender。
 
-```bash
-cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
-python3 runtime_bridge/apps/pc_runtime_bridge.py --reply-zero
-```
-
-这一步只回发零动作，用于验证 Orin -> PC 状态包和 PC -> Orin 动作包通道。网络、动作有效期和日志采样均读取运行配置；不加 `--reply-zero` 时只接收和记录状态。
-
-启动 ONNX policy bridge：
-
-```bash
-cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
-source /opt/ros/jazzy/setup.zsh
-source ros2_ws/install/setup.zsh
-
-.venv_runtime/bin/python runtime_bridge/apps/pc_policy_bridge.py
-```
-
-网络、模型、机型 profile、waypoint 产物、超时和日志采样统一读取 `runtime_bridge/config/runtime.json`，现场启动不再重复输入。任务切换使用 `--task-mode CarryMaterial`；使用其他部署配置时只需增加 `--config <path>`。
-
-它会接收 Orin `machine_state_v1`，发布 `/joint_states` 给 FK，读取 `/bucket_tip_observation`，组装 38 维 observation 并运行 ONNX。该脚本是只读诊断入口，已经移除 `--enable-motion` 和 UDP sender，只记录/打印未发送的候选动作。真机动作只能通过统一 RViz Operator 的 Action Server 和唯一 Command Sink 发送。
-ONNX 输出在 PC 内部按训练语义视为 `[-1, 1]` 策略动作，候选动作会按 `shared/machine_profile.json` 反归一化为物理速度。其中 `boom/stick/bucket` 单位 m/s，`swing` 单位 rad/s。
-反归一化只选择动作正负方向对应的速度幅值，不改变四轴符号；低层方向适配由 STM32 负责。
-默认安全判定仍会计算：如果 `estop=true`、`sensor_valid=false`、`stm32_alive=false`、`control_enabled=false` 或存在 `fault_flags`，记录的候选动作会变为零，但任何情况下都不会由该诊断脚本发送。
-
-每个真正成功发往 Orin 的 UDP 动作都会异步追加到本地会话日志：
-
-```text
-runtime_bridge/exports/action_journal/<发送入口>.<UTC启动时间>.<PID>.partNNNN.jsonl
-```
-
-每条记录包含 PC 记录时间、发送入口、Orin 目标地址、可读 packet、精确 payload 的 Base64、字节数和 SHA-256。日志写盘在线程中完成，不把磁盘延迟加入控制循环；程序启动时会打印本次日志路径。队列满或写盘失败后，下一帧动作会在 `sendto` 之前被拒绝，进程返回错误，不允许长期“继续控制但停止记录”。
-
-容量策略统一位于 `runtime_bridge/config/runtime.json` 的 `action_journal` section。正式配置按每个文件 64 MiB、保留 16 个文件轮转，总量约 1 GiB，超过后删除最旧记录；mock 配置单独写入 `runtime_bridge/exports/action_journal_mock/`。`pc_policy_bridge.py` 不发送动作；`pc_runtime_bridge.py` 只有显式增加诊断参数 `--reply-zero` 时才发送零动作并生成发送日志。
-
-到达挖掘点或倾倒点后，可以临时用固定动作脚本执行挖掘/倾倒。该脚本不做路径规划，后续由外部 planner 决定何时启动：
-
-```bash
-python3 runtime_bridge/apps/fixed_action_player.py dig
-```
-
-倾倒动作：
-
-```bash
-python3 runtime_bridge/apps/fixed_action_player.py dump
-```
-
-固定动作步骤、控制增益、阈值和超时统一位于版本化的
-`runtime_bridge/config/fixed_actions.json`，并绑定 machine ID、动作顺序、当前 machine profile SHA、
-当前 URDF SHA 和整份动作文件 SHA。配置 schema 为 `runtime_bridge_config_v10`；旧配置会明确拒绝。
-上述独立脚本只计算和打印，已经彻底移除 `--enable-motion` 和 UDP sender；真机固定动作只能通过
-统一 RViz Operator 的 ExecuteDig/ExecuteDump Action 进入唯一 Command Sink。commissioning 允许
-candidate 动作通过这两个独立按钮执行；production 和 Full Mission 仍要求现场证据完整且动作
-profile 为 `field_validated`；多点演示命令在 commissioning 中复用已开放的 candidate
-固定动作。当前 `fixed_action_profile.v2` 使用绝对归一化执行器目标，
-不再把 Follow 的结束误差叠加到固定动作上。Dig 根据现场液压系统更适合同步驱动的表现合并为
-两段：第一段将 boom/stick/bucket 送到 `+0.60/-0.15/+0.90`，第二段将三轴送到
-`-0.35/+0.15/-0.85`。Dump 将 bucket 依次送到 `+0.90/-0.85`。
-配置中未列出的轴在该段输出零命令；
-单段达到 tolerance 后进入下一段，超时则以零命令失败退出。
-Dig/Dump 伺服在 Orin 本地使用恒定 `0.6` 归一化速度，并与 ONNX 动作使用同一物理速度转换：
-Orin 只按动作正负选择对应物理速度幅值并保持 Unity 符号；PC 和 Orin 都不保存执行器方向取反
-属性，低层方向适配由 STM32 负责。
-
-每次只执行一个 ExecuteDig 或 ExecuteDump，等待动作结束和至少 1 秒日志落盘后，可把实际
-PC→Orin Action Journal 的最近一次运动会话导出为 Orin/STM32 回放 CSV：
-
-```bash
-JOURNAL="$(find runtime_bridge/exports/action_journal -maxdepth 1 -name '*.jsonl' \
-  -printf '%T@ %p\n' | sort -nr | head -1 | cut -d' ' -f2-)"
-
-python3 runtime_bridge/apps/export_orin_policy_log_to_open_loop_csv.py \
-  --input "$JOURNAL" \
-  --input-format pc-journal \
-  --latest-session \
-  --output ../EvaluationReport/captures/execute_dig.pc_to_orin.csv \
-  --phase ExecuteDig \
-  --mode FixedAction
-```
-
-导出 Dump 时只需把输出文件和 `--phase` 改为 `execute_dump...csv` 与 `ExecuteDump`。工具按超过
-1500 ms 的命令间隔划分会话，只选择最后一个包含非零动作的会话，并额外附加终态零命令；因此
-应在每次按钮执行后立即单独导出，不要连续点击两个动作后再导出。
-现场报告必须位于工作区 `EvaluationReport/`，并逐行记录 `fixed_action_profile_id`、
-`fixed_action_contract_sha256` 和每个 `experiment_run_id`；加载器同时核对报告 SHA 与动作契约，
-因此不能用无关报告或只改 `validation_status` 解锁。
+ONNX Follow、fixed action、动作日志和 STM32 发送均由
+`excavator-orin-runtime` 管理。PC 中保留的 CSV 导出工具只用于读取历史日志或生成实验产物，
+不属于活动控制路线。
 
 首次使用前需要当前 Python 环境安装 ONNX Runtime：
 

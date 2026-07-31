@@ -1,48 +1,11 @@
 {
-  "schema": "runtime_bridge_config_v10",
+  "schema": "pc_state_bridge_config_v1",
   "network": {
     "state_bind_host": "0.0.0.0",
-    "state_port": 18081,
-    "orin_host": "192.168.0.55",
-    "action_port": 18082,
-    "action_valid_ms": 100,
-    "action_time_source": "orin"
-  },
-  "artifacts": {
-    "onnx": "../RLExcavator/Assets/AIModels/ScaleModelDeploy05_cale_v3_deadzone_reward_03_p003.onnx",
-    "machine_profile": "../shared/machine_profile.json",
-    "fixed_action_profile": "runtime_bridge/config/fixed_actions.json",
-    "urdf": "kinematics/waji_description/urdf/waji.urdf",
-    "waypoint_slice": "localmap/exports/live_latest/observation_waypoint_slice.simple_rrt.json",
-    "latest_observation": "runtime_bridge/exports/latest_observation.json"
-  },
-  "policy": {
-    "bucket_tip_timeout_ms": 500,
-    "machine_state_timeout_ms": 500
-  },
-  "fixed_action": {
-    "expected_profile_sha256": "e88bb551dd5e3bf08a766f08f6a695412e7e719a8647011d88026d3c405144c8"
-  },
-  "manual_jog": {
-    "enabled": true,
-    "allowed_actuators": ["boom", "stick", "bucket"],
-    "speed_fraction": 0.2,
-    "command_period_ms": 50,
-    "heartbeat_timeout_ms": 175,
-    "max_hold_ms": 1000
-  },
-  "follow_control": {
-    "mode": "supervised_canary",
-    "allowed_actuators": ["boom", "stick", "bucket", "swing"],
-    "heartbeat_timeout_ms": 175
+    "state_port": 18081
   },
   "diagnostics": {
-    "print_every": 1,
+    "print_every": 100,
     "write_every": 5
-  },
-  "action_journal": {
-    "directory": "runtime_bridge/exports/action_journal",
-    "max_file_bytes": 67108864,
-    "retained_files": 16
   }
 }
