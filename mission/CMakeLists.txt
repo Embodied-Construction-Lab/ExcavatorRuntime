@@ -28,6 +28,17 @@ install(
   PATTERN "__pycache__" EXCLUDE
 )
 
+# The live ExcavationCycle ROS executable is installed independently of the
+# source tree, so install the PC-Orin RPC client modules that it imports.
+install(
+  FILES
+    ../runtime_bridge/__init__.py
+    ../runtime_bridge/orin_behavior_rpc.py
+    ../runtime_bridge/orin_follow_client.py
+    ../runtime_bridge/orin_cycle_client.py
+  DESTINATION ${PYTHON_INSTALL_DIR}/runtime_bridge
+)
+
 install(
   FILES
     apps/__init__.py

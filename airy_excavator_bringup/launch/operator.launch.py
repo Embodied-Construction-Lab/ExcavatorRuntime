@@ -340,6 +340,12 @@ def _launch_profile(context):
                 executable="excavation_cycle_server",
                 name="excavation_cycle_server",
                 output="screen",
+                parameters=[
+                    {
+                        "orin_host": LaunchConfiguration("orin_host"),
+                        "orin_port": LaunchConfiguration("orin_port"),
+                    }
+                ],
             )
         )
     entities.extend(

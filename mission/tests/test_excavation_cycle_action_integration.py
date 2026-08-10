@@ -1,12 +1,13 @@
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
 rclpy = pytest.importorskip("rclpy")
 
 from action_msgs.msg import GoalStatus
-from airy_excavator_interfaces.action import ExcavationCycle, ExecuteDig, ExecuteDump, Follow, Plan
+from airy_excavator_interfaces.action import ExcavationCycle, Plan
 from rclpy.action import ActionClient, ActionServer
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -30,9 +31,6 @@ class _ChildActions(Node):
         self.fail_stage = fail_stage
         self.servers = [
             ActionServer(self, Plan, "/planning/plan", execute_callback=self._plan),
-            ActionServer(self, Follow, "/excavator/follow", execute_callback=self._follow),
-            ActionServer(self, ExecuteDig, "/excavator/execute_dig", execute_callback=self._dig),
-            ActionServer(self, ExecuteDump, "/excavator/execute_dump", execute_callback=self._dump),
         ]
 
     def destroy_node(self):
@@ -60,45 +58,68 @@ class _ChildActions(Node):
         handle.succeed()
         return result
 
-    def _follow(self, handle):
-        phase = handle.request.trajectory.mission_phase
-        stage = f"FOLLOW_{phase.upper()}"
-        self.calls.append(stage)
-        result = Follow.Result()
-        result.action_datagrams = 2
-        result.quiescence_confirmed = True
-        if self.fail_stage == stage:
-            result.outcome = Follow.Result.OUTCOME_FAILED
-            result.reason_code = "FIXTURE_FAILURE"
-            result.message = "follow fixture failure"
-            handle.abort()
-            return result
-        result.outcome = Follow.Result.OUTCOME_SUCCEEDED
-        result.reason_code = "SUCCEEDED"
-        handle.succeed()
-        return result
 
-    def _dig(self, handle):
-        return self._fixed(handle, ExecuteDig, "EXECUTE_DIG")
+class _OrinCycleClient:
+    def __init__(self, *, fail_stage=""):
+        self.calls = []
+        self.fail_stage = fail_stage
 
-    def _dump(self, handle):
-        return self._fixed(handle, ExecuteDump, "EXECUTE_DUMP")
+    def run_cycle_dig_leg(self, cycle_id, trajectory, **kwargs):
+        self.calls.extend(["FOLLOW_DIG", "EXECUTE_DIG"])
+        if self.fail_stage in {"FOLLOW_DIG", "EXECUTE_DIG"}:
+            return self._result(
+                outcome="FAILED",
+                reason="FIXTURE_FAILURE",
+                message="Orin dig leg fixture failure",
+                completed_stage=self.fail_stage,
+                datagrams=5,
+            )
+        return self._result(
+            outcome="SUCCEEDED",
+            reason="DIG_LEG_COMPLETED",
+            message="Orin dig leg completed",
+            completed_stage="EXECUTE_DIG",
+            datagrams=5,
+        )
 
-    def _fixed(self, handle, action_type, stage):
-        self.calls.append(stage)
-        result = action_type.Result()
-        result.action_datagrams = 3
-        result.quiescence_confirmed = True
-        if self.fail_stage == stage:
-            result.outcome = action_type.Result.OUTCOME_FAILED
-            result.reason_code = "FIXTURE_FAILURE"
-            result.message = "fixed fixture failure"
-            handle.abort()
-            return result
-        result.outcome = action_type.Result.OUTCOME_SUCCEEDED
-        result.reason_code = "SEQUENCE_COMPLETED"
-        handle.succeed()
-        return result
+    def run_cycle_dump_leg(self, cycle_id, trajectory, **kwargs):
+        self.calls.extend(["FOLLOW_DUMP", "EXECUTE_DUMP"])
+        if self.fail_stage in {"FOLLOW_DUMP", "EXECUTE_DUMP"}:
+            return self._result(
+                outcome="FAILED",
+                reason="FIXTURE_FAILURE",
+                message="Orin dump leg fixture failure",
+                completed_stage=self.fail_stage,
+                datagrams=10,
+            )
+        return self._result(
+            outcome="SUCCEEDED",
+            reason="SEQUENCE_COMPLETED",
+            message="Orin cycle completed",
+            completed_stage="EXECUTE_DUMP",
+            datagrams=10,
+        )
+
+    def cancel_cycle(self, cycle_id):
+        self.calls.append("CANCEL_CYCLE")
+        return self._result(
+            outcome="CANCELLED",
+            reason="CANCELLED",
+            message="cycle cancelled while waiting for dump trajectory",
+            completed_stage="CANCELLED",
+            datagrams=5,
+        )
+
+    @staticmethod
+    def _result(*, outcome, reason, message, completed_stage, datagrams):
+        return SimpleNamespace(
+            outcome=outcome,
+            reason_code=reason,
+            message=message,
+            completed_stage=completed_stage,
+            quiescence_confirmed=True,
+            action_datagrams=datagrams,
+        )
 
 
 def _goal():
@@ -115,7 +136,11 @@ def _harness(fail_stage=""):
     context = rclpy.context.Context()
     rclpy.init(context=context)
     children = _ChildActions(context=context, fail_stage=fail_stage)
-    scheduler = ExcavationCycleNode(context=context)
+    children.orin_cycle = _OrinCycleClient(fail_stage=fail_stage)
+    scheduler = ExcavationCycleNode(
+        context=context,
+        orin_cycle_client=children.orin_cycle,
+    )
     client_node = rclpy.create_node("excavation_cycle_client", context=context)
     executor = MultiThreadedExecutor(num_threads=8, context=context)
     for node in (children, scheduler, client_node):
@@ -153,9 +178,11 @@ def test_cycle_runs_required_order_and_replans_dump_after_dig():
         assert elapsed_s < 0.75
         assert children.calls == [
             "PLAN_DIG",
+            "PLAN_DUMP",
+        ]
+        assert children.orin_cycle.calls == [
             "FOLLOW_DIG",
             "EXECUTE_DIG",
-            "PLAN_DUMP",
             "FOLLOW_DUMP",
             "EXECUTE_DUMP",
         ]
@@ -174,6 +201,120 @@ def test_cycle_stops_after_quiescent_child_failure():
         assert wrapped.status == GoalStatus.STATUS_ABORTED
         assert wrapped.result.reason_code == "FIXTURE_FAILURE"
         assert wrapped.result.quiescence_confirmed
-        assert children.calls == ["PLAN_DIG", "FOLLOW_DIG", "EXECUTE_DIG"]
+        assert children.calls == ["PLAN_DIG"]
+        assert children.orin_cycle.calls == ["FOLLOW_DIG", "EXECUTE_DIG"]
     finally:
         _stop(harness)
+
+
+def test_dump_leg_failure_reports_orin_cumulative_datagrams_once():
+    harness = _harness(fail_stage="EXECUTE_DUMP")
+    _, children, _, _, _, _, client = harness
+    try:
+        handle = _wait_future(client.send_goal_async(_goal()))
+        wrapped = _wait_future(handle.get_result_async())
+
+        assert wrapped.status == GoalStatus.STATUS_ABORTED
+        assert wrapped.result.reason_code == "FIXTURE_FAILURE"
+        assert wrapped.result.action_datagrams == 10
+        assert children.calls == ["PLAN_DIG", "PLAN_DUMP"]
+    finally:
+        _stop(harness)
+
+
+def test_dump_planning_failure_cancels_orin_cycle_waiting_at_boundary():
+    harness = _harness(fail_stage="PLAN_DUMP")
+    _, children, _, _, _, _, client = harness
+    try:
+        handle = _wait_future(client.send_goal_async(_goal()))
+        wrapped = _wait_future(handle.get_result_async())
+
+        assert wrapped.status == GoalStatus.STATUS_ABORTED
+        assert wrapped.result.reason_code == "FIXTURE_FAILURE"
+        assert children.calls == ["PLAN_DIG", "PLAN_DUMP"]
+        assert children.orin_cycle.calls == [
+            "FOLLOW_DIG",
+            "EXECUTE_DIG",
+            "CANCEL_CYCLE",
+        ]
+    finally:
+        _stop(harness)
+
+
+def test_cycle_can_delegate_each_motion_leg_to_the_orin_local_coordinator():
+    class RecordingOrinCycleClient:
+        def __init__(self):
+            self.calls = []
+
+        def run_cycle_dig_leg(
+            self,
+            cycle_id,
+            trajectory,
+            *,
+            feedback_callback=None,
+            status_callback=None,
+            cancel_requested=None,
+        ):
+            self.calls.append(("DIG_LEG", cycle_id, trajectory["mission_phase"]))
+            return SimpleNamespace(
+                outcome="SUCCEEDED",
+                reason_code="DIG_LEG_COMPLETED",
+                message="dig leg completed",
+                completed_stage="EXECUTE_DIG",
+                quiescence_confirmed=True,
+                action_datagrams=5,
+            )
+
+        def run_cycle_dump_leg(
+            self,
+            cycle_id,
+            trajectory,
+            *,
+            feedback_callback=None,
+            status_callback=None,
+            cancel_requested=None,
+        ):
+            self.calls.append(("DUMP_LEG", cycle_id, trajectory["mission_phase"]))
+            return SimpleNamespace(
+                outcome="SUCCEEDED",
+                reason_code="SEQUENCE_COMPLETED",
+                message="cycle completed",
+                completed_stage="EXECUTE_DUMP",
+                quiescence_confirmed=True,
+                action_datagrams=10,
+            )
+
+    context = rclpy.context.Context()
+    rclpy.init(context=context)
+    children = _ChildActions(context=context)
+    orin_client = RecordingOrinCycleClient()
+    scheduler = ExcavationCycleNode(
+        context=context,
+        orin_cycle_client=orin_client,
+    )
+    client_node = rclpy.create_node("orin_cycle_mission_client", context=context)
+    executor = MultiThreadedExecutor(num_threads=6, context=context)
+    for node in (children, scheduler, client_node):
+        executor.add_node(node)
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread.start()
+    client = ActionClient(client_node, ExcavationCycle, "/mission/run_cycle")
+    assert client.wait_for_server(timeout_sec=2.0)
+    try:
+        handle = _wait_future(client.send_goal_async(_goal()))
+        wrapped = _wait_future(handle.get_result_async())
+
+        assert wrapped.status == GoalStatus.STATUS_SUCCEEDED
+        assert wrapped.result.action_datagrams == 10
+        assert children.calls == ["PLAN_DIG", "PLAN_DUMP"]
+        assert [call[0] for call in orin_client.calls] == ["DIG_LEG", "DUMP_LEG"]
+        assert [call[2] for call in orin_client.calls] == ["dig", "dump"]
+        assert orin_client.calls[0][1] == orin_client.calls[1][1]
+        assert orin_client.calls[0][1].startswith("integration-mission:")
+    finally:
+        executor.shutdown(timeout_sec=1.0)
+        thread.join(timeout=1.0)
+        client_node.destroy_node()
+        scheduler.destroy_node()
+        children.destroy_node()
+        rclpy.shutdown(context=context)

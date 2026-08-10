@@ -31,6 +31,172 @@ rviz/                    # RViz 配置
 docs/                    # 雷达接线、端口、防火墙等运行笔记
 ```
 
+## 0. 强化学习 Orin + PC 真机测试速查
+
+当前测试链路：
+
+```text
+STM32 Machine State
+  → Orin 本地 FK / 38D Observation / RL ONNX / waypoint 推进
+  → Orin 本地 Action Relay
+  → STM32
+
+PC 雷达 / LocalMap / Dig-Dump Target / Bucket Tip 规划
+  → 低频 Trajectory Snapshot
+  → Orin
+```
+
+当前现场网络和串口：
+
+```text
+PC:   192.168.0.220
+Orin: 192.168.0.55
+STM32 serial on Orin: /dev/ttyTHS1
+Behavior RPC: TCP 18083
+```
+
+不要在以下命令前设置 `ROS_DOMAIN_ID`。启动顺序固定为：
+
+```text
+1. STM32 上电并完成 Homing
+2. Orin Runtime
+3. PC Operator
+4. 检查状态
+5. 在 RViz Panel 点击 RL Follow
+```
+
+### 0.1 Orin 终端：启动端侧 RL Follow
+
+确认 `deploy/edge_runtime.remote.json` 中：
+
+```json
+{
+  "mode": "remote_control",
+  "remote_behavior": {
+    "bind_port": 18083,
+    "allowed_client_host": "192.168.0.220"
+  }
+}
+```
+
+然后启动：
+
+```bash
+cd ~/workspace_/excavator-orin-runtime
+conda activate excavator-orin
+
+mkdir -p deploy/logs
+test -f deploy/edge_runtime.remote.json || \
+  cp deploy/edge_runtime.remote.example.json deploy/edge_runtime.remote.json
+python -m json.tool deploy/edge_runtime.remote.json >/dev/null
+
+run_tag=$(date +%Y%m%d_%H%M%S)
+
+python orin_state_sender.py \
+  --serial-port /dev/ttyTHS1 \
+  --control-enabled \
+  --pc-host 192.168.0.220 \
+  --edge-config deploy/edge_runtime.remote.json \
+  --edge-motion-authorization ALLOW_EDGE_MACHINE_MOTION \
+  --print-every 100 \
+  2>&1 | tee "deploy/logs/rl_follow_${run_tag}_stdout.log"
+```
+
+预期启动日志包含：
+
+```text
+REMOTE EDGE CONTROL ARMED IDLE
+behavior RPC 0.0.0.0:18083 from 192.168.0.220
+```
+
+同一台 Orin 上只能运行一个 `orin_state_sender.py`，因为它独占 STM32 串口。重启前检查：
+
+```bash
+pgrep -af orin_state_sender.py
+```
+
+### 0.2 PC 终端：启动感知、规划、Panel 和 RViz
+
+```bash
+cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
+source /opt/ros/jazzy/setup.zsh
+source ros2_ws/install/setup.zsh
+
+ros2 launch airy_excavator_bringup operator.launch.py \
+  profile:=live_commissioning \
+  motion_authorization:=ALLOW_LIVE_MACHINE_MOTION \
+  orin_host:=192.168.0.55 \
+  orin_port:=18083
+```
+
+该命令已经统一启动：
+
+- Orin Machine State → `/joint_states` 的 PC 状态桥；
+- FK、RobotModel 和 Bucket Tip 显示；
+- 雷达、LocalMap 和 OctoMap；
+- Dig/Dump Target 和 Bucket Tip 规划器；
+- Orin Edge Gateway；
+- Mission Actions、RViz Panel 和 RViz。
+
+不需要再分别启动 FK、感知栈、规划器或另一个 RViz。
+
+### 0.3 PC 第二终端：运动前检查
+
+```bash
+cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
+source /opt/ros/jazzy/setup.zsh
+source ros2_ws/install/setup.zsh
+
+ping -c 3 192.168.0.55
+ros2 topic hz /joint_states
+ros2 topic echo /bucket_tip_pose_machine_root_ros --once
+ros2 topic echo /mission/runtime_status --once
+```
+
+RViz Panel 顶部必须显示：
+
+```text
+LIVE / COMMISSIONING / READY
+```
+
+运行状态应包含：
+
+```text
+motion_backend: orin_edge
+motion_gate_reason: ready
+```
+
+如果不是 `READY`，不要反复点击按钮；先根据 Panel 的 gate reason 和 Logs 标签定位问题。
+
+### 0.4 只测试强化学习 Follow
+
+在 RViz Panel → `Actions` 中：
+
+1. 点击 `Plan + Follow DIG`：PC 规划到 Dig 点，Orin 使用 RL ONNX 实时跟踪；
+2. 等待 Result 完成且按钮恢复；
+3. 点击 `Plan + Follow DUMP`：PC 规划到 Dump 点，Orin 使用同一个 RL ONNX 实时跟踪。
+
+`ExecuteDig` 和 `ExecuteDump` 是 Orin 固定动作，不属于 RL Follow 测试。一次只执行一个行为。
+`Cancel Panel Operation` 只取消当前软件行为，**不是急停**；现场异常使用真机急停。
+
+### 0.5 测试后保留日志
+
+Orin：
+
+```bash
+ls -lh deploy/logs/rl_follow_${run_tag}_stdout.log deploy/logs/edge_runtime.jsonl
+python -m edge_runtime.audit deploy/logs/edge_runtime.jsonl
+```
+
+PC 的 ROS launch 日志自动保存在：
+
+```text
+~/.ros/log/latest/
+```
+
+出现问题时至少保留：Orin stdout、`edge_runtime.jsonl`、PC `~/.ros/log/latest/`、测试目标、
+现场视频和大致发生时间。
+
 ## 1. 准备环境
 
 ```bash
@@ -147,7 +313,9 @@ ros2 run airy_mission_runtime run_excavation_demo \
 ```
 
 `--repeat 2` 表示把整个点位列表重复两轮。脚本每次只提交一个 `/mission/run_cycle` Goal，
-等待 `FollowDig → Dig → FollowDump → Dump` 返回成功且确认静止后再提交下一个；任一步拒绝、
+等待 `FollowDig → Dig → FollowDump → Dump` 返回成功且确认静止后再提交下一个。PC 只执行
+`PLAN_DIG` 与 `PLAN_DUMP` 两个规划边界；Orin 在本地分别连续推进
+`FollowDig → ExecuteDig` 和 `FollowDump → ExecuteDump`，不再由 PC 为四个动作逐一发 RPC。任一步拒绝、
 失败、超时或取消都会停止演示，不会跳过失败点继续运动。
 
 Panel → Tests 只保留离线 JointState 滑块；它在 live profile 中被禁用，不发送真机动作。
