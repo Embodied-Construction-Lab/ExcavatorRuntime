@@ -6,25 +6,25 @@
   "dig_points": [
     {
       "point_id": "dig_01",
-      "position_m": [1.0, 0.3, 0.0],
+      "position_m": [1.0, 0.2, 0.0],
       "normal": [0.0, 0.0, 1.0],
       "radius_m": 0.25
     },
     {
       "point_id": "dig_02",
-      "position_m": [1.0, 0.1, 0.0],
+      "position_m": [1.0, 0.0, 0.0],
       "normal": [0.0, 0.0, 1.0],
       "radius_m": 0.25
     },
     {
       "point_id": "dig_03",
-      "position_m": [1.0, -0.1, 0.0],
+      "position_m": [1.0, -0.2, 0.0],
       "normal": [0.0, 0.0, 1.0],
       "radius_m": 0.25
     }
   ],
   "dump_target": {
-    "position_m": [-0.2, -1.4, 0.1],
+    "position_m": [-0.2, -1.2, 0.1],
     "normal": [0.0, 0.0, 1.0],
     "radius_m": 0.25
   },

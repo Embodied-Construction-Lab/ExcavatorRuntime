@@ -20,11 +20,11 @@ from rclpy.action import ActionClient
 from rclpy.executors import MultiThreadedExecutor
 
 from runtime_bridge.apps.orin_edge_follow_gateway import (
+    LIVE_MOTION_AUTHORIZATION,
     OrinEdgeFollowGatewayNode,
     _remote_goal_admissible,
     build_arg_parser,
 )
-from runtime_bridge.live_control import LIVE_MOTION_AUTHORIZATION
 from runtime_bridge.orin_behavior_rpc import receive_message, send_message
 from runtime_bridge.orin_follow_client import OrinRuntimeStatus
 
@@ -273,8 +273,8 @@ def _goal(node):
     snapshot.mission_phase = "dig"
     snapshot.task_mode = "MoveToDig"
     snapshot.planning_scope = "execution_strict"
-    snapshot.control_stage = "production"
-    snapshot.workspace_constraint = "field_validated"
+    snapshot.control_stage = "commissioning"
+    snapshot.workspace_constraint = "disabled_by_operator"
     snapshot.execution_eligible = True
     snapshot.source_bucket_tip_stamp = now.to_msg()
     snapshot.source_local_map_stamp = now.to_msg()
@@ -301,7 +301,7 @@ def _isolated_gateway(remote, context):
         orin_host=remote.host,
         orin_port=remote.port,
         motion_authorization=LIVE_MOTION_AUTHORIZATION,
-        control_stage="production",
+        control_stage="commissioning",
         follow_action=follow_action,
         runtime_status_topic=status_topic,
         context=context,
@@ -339,7 +339,7 @@ def test_gateway_cli_exposes_only_remote_endpoint_authorization_and_control_stag
             "--motion-authorization",
             LIVE_MOTION_AUTHORIZATION,
             "--control-stage",
-            "production",
+            "commissioning",
         ]
     )
 
@@ -673,7 +673,7 @@ def test_gateway_aborts_silent_follow_and_releases_owned_operation():
 
         handle = _wait_future(action_client.send_goal_async(_goal(client_node)))
         assert handle.accepted
-        wrapped = _wait_future(handle.get_result_async(), timeout_s=2.0)
+        wrapped = _wait_future(handle.get_result_async(), timeout_s=5.0)
 
         assert wrapped.status == GoalStatus.STATUS_ABORTED
         assert wrapped.result.reason_code == "ORIN_RPC_ERROR"

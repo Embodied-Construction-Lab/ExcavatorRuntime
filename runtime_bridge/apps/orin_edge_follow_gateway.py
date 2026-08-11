@@ -26,7 +26,6 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from runtime_bridge.control_stage import CONTROL_STAGES, control_stage_policy
-from runtime_bridge.live_control import motion_authorization_granted
 from runtime_bridge.orin_behavior_rpc import (
     OrinBehaviorConnectionError,
     OrinBehaviorProtocolError,
@@ -51,6 +50,7 @@ EXECUTE_DIG_ACTION = "/excavator/execute_dig"
 EXECUTE_DUMP_ACTION = "/excavator/execute_dump"
 RUNTIME_STATUS_TOPIC = "/mission/runtime_status"
 STATUS_MAX_AGE_S = 0.6
+LIVE_MOTION_AUTHORIZATION = "ALLOW_LIVE_MACHINE_MOTION"
 
 
 class OrinEdgeFollowGatewayNode(Node):
@@ -70,7 +70,7 @@ class OrinEdgeFollowGatewayNode(Node):
         context=None,
     ) -> None:
         super().__init__("orin_edge_follow_gateway", context=context)
-        if not motion_authorization_granted(motion_authorization):
+        if motion_authorization != LIVE_MOTION_AUTHORIZATION:
             raise ValueError("Orin Edge Follow requires exact PC motion authorization")
         self._control_stage = control_stage_policy(control_stage).name
         self._client = OrinFollowClient(orin_host, orin_port)
@@ -503,13 +503,7 @@ def _runtime_status_message(
     status.fixed_actions_validated = bool(
         remote and remote.fixed_actions_validated
     )
-    status.manual_jog_ready = False
     status.follow_control_mode = "edge_onnx"
-    status.follow_speed_fraction = 1.0
-    status.follow_allowed_actuators = ["boom", "stick", "bucket", "swing"]
-    status.follow_max_motion_ms = 0
-    status.follow_canary_ready = False
-    status.follow_supervision_active = bool(local_active and remote)
     status.motion_gate_reason = (
         "behavior_active"
         if local_active

@@ -6,19 +6,21 @@ from __future__ import annotations
 import copy
 import threading
 import time
+import uuid
 
 import rclpy
-from airy_excavator_interfaces.action import (
-    ExcavationCycle,
-    ExecuteDig,
-    ExecuteDump,
-    Follow,
-    Plan,
-)
+from airy_excavator_interfaces.action import ExcavationCycle, Plan
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+
+from runtime_bridge.orin_behavior_rpc import (
+    OrinBehaviorConnectionError,
+    OrinBehaviorProtocolError,
+    trajectory_snapshot_to_message,
+)
+from runtime_bridge.orin_cycle_client import CycleLegRejected, OrinCycleClient
 
 
 _CHILD_FUTURE_POLL_S = 0.01
@@ -46,13 +48,18 @@ class MissionCancelled(ChildFailure):
 
 
 class ExcavationCycleNode(Node):
-    def __init__(self, *, context=None) -> None:
+    def __init__(self, *, context=None, orin_cycle_client=None) -> None:
         super().__init__("excavation_cycle_server", context=context)
         self._group = ReentrantCallbackGroup()
         self._plan = ActionClient(self, Plan, "/planning/plan", callback_group=self._group)
-        self._follow = ActionClient(self, Follow, "/excavator/follow", callback_group=self._group)
-        self._dig = ActionClient(self, ExecuteDig, "/excavator/execute_dig", callback_group=self._group)
-        self._dump = ActionClient(self, ExecuteDump, "/excavator/execute_dump", callback_group=self._group)
+        if orin_cycle_client is None:
+            self.declare_parameter("orin_host", "127.0.0.1")
+            self.declare_parameter("orin_port", 18083)
+            orin_cycle_client = OrinCycleClient(
+                str(self.get_parameter("orin_host").value),
+                int(self.get_parameter("orin_port").value),
+            )
+        self._orin_cycle = orin_cycle_client
         self._lock = threading.Lock()
         self._reserved = False
         self._server = ActionServer(
@@ -65,7 +72,8 @@ class ExcavationCycleNode(Node):
             callback_group=self._group,
         )
         self.get_logger().info(
-            "ExcavationCycle ready: PlanDig->Follow->ExecuteDig->PlanDump->Follow->ExecuteDump"
+            "ExcavationCycle ready: PC PlanDig -> Orin DigLeg -> "
+            "PC PlanDump -> Orin DumpLeg"
         )
 
     def destroy_node(self):
@@ -89,19 +97,45 @@ class ExcavationCycleNode(Node):
     def _execute(self, goal_handle) -> ExcavationCycle.Result:
         datagrams = 0
         completed_stage = ""
+        cycle_id = "%s:%s" % (
+            goal_handle.request.dig_target.mission_id,
+            uuid.uuid4().hex,
+        )
         try:
             dig_trajectory = self._plan_phase(goal_handle, goal_handle.request.dig_target, "PLAN_DIG")
             completed_stage = "PLAN_DIG"
-            datagrams += self._follow_phase(goal_handle, dig_trajectory, "FOLLOW_DIG")
-            completed_stage = "FOLLOW_DIG"
-            datagrams += self._fixed_phase(goal_handle, self._dig, ExecuteDig, goal_handle.request.dig_target, "EXECUTE_DIG")
-            completed_stage = "EXECUTE_DIG"
-            dump_trajectory = self._plan_phase(goal_handle, goal_handle.request.dump_target, "PLAN_DUMP")
+            dig_leg = self._run_orin_leg(
+                goal_handle,
+                cycle_id=cycle_id,
+                trajectory=dig_trajectory,
+                stage="DIG_LEG",
+                run=self._orin_cycle.run_cycle_dig_leg,
+                expected_reason="DIG_LEG_COMPLETED",
+                expected_completed_stage="EXECUTE_DIG",
+            )
+            datagrams = dig_leg.action_datagrams
+            completed_stage = dig_leg.completed_stage
+            try:
+                dump_trajectory = self._plan_phase(
+                    goal_handle,
+                    goal_handle.request.dump_target,
+                    "PLAN_DUMP",
+                )
+            except Exception:
+                self._cancel_waiting_cycle(cycle_id)
+                raise
             completed_stage = "PLAN_DUMP"
-            datagrams += self._follow_phase(goal_handle, dump_trajectory, "FOLLOW_DUMP")
-            completed_stage = "FOLLOW_DUMP"
-            datagrams += self._fixed_phase(goal_handle, self._dump, ExecuteDump, goal_handle.request.dump_target, "EXECUTE_DUMP")
-            completed_stage = "EXECUTE_DUMP"
+            dump_leg = self._run_orin_leg(
+                goal_handle,
+                cycle_id=cycle_id,
+                trajectory=dump_trajectory,
+                stage="DUMP_LEG",
+                run=self._orin_cycle.run_cycle_dump_leg,
+                expected_reason="SEQUENCE_COMPLETED",
+                expected_completed_stage="EXECUTE_DUMP",
+            )
+            datagrams = dump_leg.action_datagrams
+            completed_stage = dump_leg.completed_stage
             goal_handle.succeed()
             return self._result(
                 ExcavationCycle.Result.OUTCOME_SUCCEEDED,
@@ -112,7 +146,7 @@ class ExcavationCycleNode(Node):
                 datagrams,
             )
         except MissionCancelled as exc:
-            datagrams += exc.datagrams
+            datagrams = max(datagrams, exc.datagrams)
             goal_handle.canceled()
             return self._result(
                 ExcavationCycle.Result.OUTCOME_CANCELLED,
@@ -123,7 +157,7 @@ class ExcavationCycleNode(Node):
                 datagrams,
             )
         except ChildFailure as exc:
-            datagrams += exc.datagrams
+            datagrams = max(datagrams, exc.datagrams)
             self.get_logger().error(f"Mission stage {exc.stage} failed: {exc.reason}: {exc}")
             goal_handle.abort()
             return self._result(
@@ -164,35 +198,81 @@ class ExcavationCycleNode(Node):
             )
         return result.trajectory
 
-    def _follow_phase(self, parent, trajectory, stage: str) -> int:
-        goal = Follow.Goal()
-        goal.trajectory = trajectory
-        wrapped = self._run_child(parent, self._follow, goal, stage)
-        result = wrapped.result
-        if result.outcome != Follow.Result.OUTCOME_SUCCEEDED or result.reason_code != "SUCCEEDED" or not result.quiescence_confirmed:
+    def _run_orin_leg(
+        self,
+        parent,
+        *,
+        cycle_id: str,
+        trajectory,
+        stage: str,
+        run,
+        expected_reason: str,
+        expected_completed_stage: str,
+    ):
+        self._feedback(parent, stage, "sending trajectory to Orin", 0)
+        try:
+            result = run(
+                cycle_id,
+                trajectory_snapshot_to_message(trajectory),
+                feedback_callback=lambda update: self._feedback(
+                    parent,
+                    update.stage,
+                    update.message,
+                    update.action_datagrams,
+                ),
+                cancel_requested=lambda: parent.is_cancel_requested,
+            )
+        except CycleLegRejected as exc:
             raise ChildFailure(
                 stage,
-                result.reason_code or "FOLLOW_FAILED",
+                exc.reason_code,
+                exc.message,
+                quiescent=True,
+            ) from exc
+        except (OrinBehaviorConnectionError, OrinBehaviorProtocolError) as exc:
+            raise ChildFailure(
+                stage,
+                "ORIN_RPC_ERROR",
+                str(exc),
+                quiescent=False,
+            ) from exc
+        if result.outcome == "CANCELLED":
+            raise MissionCancelled(
+                stage,
+                result.reason_code or "CANCELLED",
                 result.message,
                 result.action_datagrams,
                 result.quiescence_confirmed,
             )
-        return result.action_datagrams
+        if (
+            result.outcome != "SUCCEEDED"
+            or result.reason_code != expected_reason
+            or result.completed_stage != expected_completed_stage
+            or not result.quiescence_confirmed
+        ):
+            raise ChildFailure(
+                stage,
+                result.reason_code or "ORIN_CYCLE_LEG_FAILED",
+                result.message,
+                result.action_datagrams,
+                result.quiescence_confirmed,
+            )
+        return result
 
-    def _fixed_phase(self, parent, client, action_type, target, stage: str) -> int:
-        goal = action_type.Goal()
-        goal.target = self._fresh_target(target)
-        wrapped = self._run_child(parent, client, goal, stage)
-        result = wrapped.result
-        if result.outcome != action_type.Result.OUTCOME_SUCCEEDED or result.reason_code != "SEQUENCE_COMPLETED" or not result.quiescence_confirmed:
-            raise ChildFailure(
-                stage,
-                result.reason_code or "FIXED_ACTION_FAILED",
-                result.message,
-                result.action_datagrams,
-                result.quiescence_confirmed,
+    def _cancel_waiting_cycle(self, cycle_id: str) -> None:
+        try:
+            result = self._orin_cycle.cancel_cycle(cycle_id)
+        except Exception as exc:
+            self.get_logger().error(
+                f"Failed to cancel Orin cycle {cycle_id} at planning boundary: {exc}"
             )
-        return result.action_datagrams
+            return
+        if result.outcome != "CANCELLED" or not result.quiescence_confirmed:
+            self.get_logger().error(
+                "Orin cycle boundary cancel did not confirm quiescence: "
+                f"cycle_id={cycle_id} outcome={result.outcome} "
+                f"reason={result.reason_code}"
+            )
 
     def _fresh_target(self, target):
         snapshot = copy.deepcopy(target)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-CONTROL_STAGES = ("commissioning", "production")
+CONTROL_STAGES = ("commissioning",)
 
 
 @dataclass(frozen=True)
@@ -24,13 +24,6 @@ _POLICIES = {
         require_field_validated_targets=False,
         require_field_validated_workspace=False,
         allowed_target_statuses=frozenset({"rviz_adjusted", "field_validated"}),
-    ),
-    "production": ControlStagePolicy(
-        name="production",
-        enforce_actuator_position_bounds=True,
-        require_field_validated_targets=True,
-        require_field_validated_workspace=True,
-        allowed_target_statuses=frozenset({"field_validated"}),
     ),
 }
 

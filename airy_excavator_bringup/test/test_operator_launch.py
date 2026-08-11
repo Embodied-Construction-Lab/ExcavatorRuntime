@@ -20,7 +20,7 @@ def test_operator_launch_owns_one_rviz_and_reuses_common_shadow_stack():
     assert '"enable_embedded_joint_tests"' in text
 
 
-def test_operator_launch_has_one_control_sender_and_no_legacy_sender():
+def test_operator_launch_uses_only_the_orin_edge_command_sink():
     text = launch_text().lower()
 
     for forbidden in (
@@ -28,29 +28,20 @@ def test_operator_launch_has_one_control_sender_and_no_legacy_sender():
         "motion_sender",
         "enable-motion",
         "reply-zero",
+        "live_machine_behavior_server.py",
+        "udp_policy",
+        "live_production",
     ):
         assert forbidden not in text
-    assert text.count("live_machine_behavior_server.py") >= 1
     assert text.count("orin_edge_follow_gateway.py") >= 1
     assert "allow_live_machine_motion" in text
-
-
-def test_operator_launch_passes_exact_authorization_to_the_command_sink():
-    text = launch_text()
-    control_process = text[
-        text.index("control_process = ExecuteProcess(") :
-        text.index("entities.extend(\n            [control_process")
-    ]
-
-    assert '"--motion-authorization"' in control_process
-    assert '"ALLOW_LIVE_MACHINE_MOTION"' in control_process
 
 
 def test_orin_edge_gateway_receives_behavior_endpoint_but_no_pc_action_sink():
     text = launch_text()
     gateway_process = text[
         text.index("gateway_process = ExecuteProcess(") :
-        text.index("entities.extend(\n            [gateway_process")
+        text.index("entities.append(\n        LogInfo")
     ]
 
     assert "orin_edge_follow_gateway.py" in gateway_process
@@ -71,6 +62,7 @@ def test_non_motion_live_planner_receives_only_supported_arguments():
     assert '"--mission"' in planner_process
     assert '"--demo"' in planner_process
     assert '"--urdf"' in planner_process
+    assert '"--runtime-config"' not in planner_process
     assert '"--motion-authorization"' not in planner_process
 
 
@@ -98,4 +90,7 @@ def test_live_input_adapter_exit_shuts_down_the_whole_operator_stack():
     assert "_required_process(state_bridge_process" in text
     assert "_required_process(perception_process" in text
     assert "_required_process(planner_process" in text
-    assert "_required_process(control_process" in text
+    assert (
+        "_required_process(\n"
+        "                    gateway_process, \"required Orin Edge Follow Gateway exited\""
+    ) in text

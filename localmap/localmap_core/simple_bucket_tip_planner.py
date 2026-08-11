@@ -264,6 +264,13 @@ def plan_bucket_tip_path(
     if straight_line_reachable and not segment_in_collision(start, goal, compiled, edge_check_step_m):
         path = resample_path(np.vstack((start, goal)), waypoint_count)
         return PlannedPath(True, path, "straight_line", 0)
+    if waypoint_count == 2:
+        return PlannedPath(
+            False,
+            np.empty((0, 3), dtype=np.float64),
+            "endpoint_only_path_blocked",
+            0,
+        )
 
     rng = np.random.default_rng(seed)
     nodes = [start]

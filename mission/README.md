@@ -3,8 +3,7 @@
 `config/excavation_cycle.json` 是挖掘点与倾倒点的唯一文件入口。两个 `position_m`
 都使用 ROS 右手坐标 `machine_root_ros`：`+X` 前、`+Y` 左、`+Z` 上，单位为米。
 
-当前现场配置使用 `rviz_adjusted`，可用于 `live_commissioning`；它不等于
-`field_validated`，不能用于 production 准入。
+当前现场配置使用 `rviz_adjusted`，供唯一真机入口 `live_commissioning` 使用。
 
 `config/excavation_demo.json` 是多点演示入口。它保存有序 `dig_points` 和一个公共
 `dump_target`，PC 依次为每个挖掘点提交一个完整
@@ -54,9 +53,9 @@ UDP action sender，输出中的 `action_datagrams` 必须恒为 `0`。replay �
 “已执行”。当前所有已实现行为固定为 `execution_mode=shadow`，使用无 sender Backend；
 Result 中 `action_datagrams` 必须是 `0`。
 
-真机动作链路的独立验收位于 Panel 的 Tests 标签页：Hold-to-Jog 不把 placeholder Mission 或
-candidate 固定动作伪装成已验证，只允许 boom/stick/bucket 单轴低速短时命令，并由心跳、状态新鲜度、
-绝对编码器端点余量和终态连续零命令保护。它通过同一个 live Command Sink，因此不是第二套控制代码。
+Panel 的 Tests 标签页只提供离线 JointState 滑块；live profile 中禁用，不控制真机。
+真机 `Follow`、`ExecuteDig` 与 `ExecuteDump` 全部通过 Orin Edge Runtime 的同一执行权和
+Command Sink。
 
 编译：
 

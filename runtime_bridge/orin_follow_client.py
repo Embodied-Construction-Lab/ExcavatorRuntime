@@ -19,6 +19,8 @@ from runtime_bridge.orin_behavior_rpc import (
     send_message,
 )
 
+DEFAULT_STREAM_SILENCE_TIMEOUT_S = 3.0
+
 
 @dataclass(frozen=True)
 class FollowFeedback:
@@ -217,7 +219,7 @@ class OrinFollowClient:
         session_id: str | None = None,
         connect_timeout_s: float = 3.0,
         poll_interval_s: float = 0.05,
-        stream_silence_timeout_s: float = 1.0,
+        stream_silence_timeout_s: float = DEFAULT_STREAM_SILENCE_TIMEOUT_S,
     ) -> None:
         if not isinstance(host, str) or not host:
             raise ValueError("host must be non-empty")
@@ -338,6 +340,9 @@ class OrinFollowClient:
         cancel_sent = False
         expected_event_seq = 0
         last_event_at_s = time.monotonic()
+        last_event_type = "none"
+        last_event_seq = -1
+        events_received = 0
         while True:
             if cancel_requested() and not cancel_sent:
                 send_message(connection, self._request("cancel_follow", request_id))
@@ -346,10 +351,20 @@ class OrinFollowClient:
                 [connection], [], [], self._poll_interval_s
             )
             if not readable:
-                if time.monotonic() - last_event_at_s > self._stream_silence_timeout_s:
+                silence_s = time.monotonic() - last_event_at_s
+                if silence_s > self._stream_silence_timeout_s:
                     raise OrinBehaviorConnectionError(
-                        "Orin Follow stream was silent for "
-                        f"{self._stream_silence_timeout_s:.3f}s"
+                        self._stream_silence_diagnostic(
+                            stream_name="Follow",
+                            request_id=request_id,
+                            accepted=accepted,
+                            silence_s=silence_s,
+                            last_event_type=last_event_type,
+                            last_event_seq=last_event_seq,
+                            events_received=events_received,
+                            operation_field="trajectory_id",
+                            operation_value=trajectory_id,
+                        )
                     )
                 continue
             event = receive_message(connection)
@@ -358,6 +373,9 @@ class OrinFollowClient:
                 event,
                 expected_seq=expected_event_seq,
             )
+            last_event_type = str(event.get("type", "unknown"))
+            last_event_seq = expected_event_seq
+            events_received += 1
             expected_event_seq += 1
             event_type = event.get("type")
             if event_type == "status":
@@ -385,6 +403,31 @@ class OrinFollowClient:
                     f"unexpected {event_type!r} event in Follow stream"
                 )
 
+    def _stream_silence_diagnostic(
+        self,
+        *,
+        stream_name: str,
+        request_id: str,
+        accepted: bool,
+        silence_s: float,
+        last_event_type: str,
+        last_event_seq: int,
+        events_received: int,
+        operation_field: str,
+        operation_value: str,
+    ) -> str:
+        host, port = self._endpoint
+        return (
+            f"Orin {stream_name} stream was silent for {silence_s:.3f}s "
+            f"(limit={self._stream_silence_timeout_s:.3f}s); "
+            f"endpoint={host}:{port} session_id={self._session_id} "
+            f"request_id={request_id} {operation_field}={operation_value} "
+            f"accepted={str(accepted).lower()} "
+            f"last_event_type={last_event_type} "
+            f"last_event_seq={last_event_seq} "
+            f"events_received={events_received}"
+        )
+
     def _receive_fixed_action(
         self,
         connection: socket.socket,
@@ -399,6 +442,9 @@ class OrinFollowClient:
         cancel_sent = False
         expected_event_seq = 0
         last_event_at_s = time.monotonic()
+        last_event_type = "none"
+        last_event_seq = -1
+        events_received = 0
         while True:
             if cancel_requested() and not cancel_sent:
                 send_message(
@@ -413,15 +459,28 @@ class OrinFollowClient:
                 self._poll_interval_s,
             )
             if not readable:
-                if time.monotonic() - last_event_at_s > self._stream_silence_timeout_s:
+                silence_s = time.monotonic() - last_event_at_s
+                if silence_s > self._stream_silence_timeout_s:
                     raise OrinBehaviorConnectionError(
-                        "Orin fixed-action stream was silent for "
-                        f"{self._stream_silence_timeout_s:.3f}s"
+                        self._stream_silence_diagnostic(
+                            stream_name="fixed-action",
+                            request_id=request_id,
+                            accepted=accepted,
+                            silence_s=silence_s,
+                            last_event_type=last_event_type,
+                            last_event_seq=last_event_seq,
+                            events_received=events_received,
+                            operation_field="behavior",
+                            operation_value=behavior,
+                        )
                     )
                 continue
             event = receive_message(connection)
             last_event_at_s = time.monotonic()
             _validate_event_envelope(event, expected_seq=expected_event_seq)
+            last_event_type = str(event.get("type", "unknown"))
+            last_event_seq = expected_event_seq
+            events_received += 1
             expected_event_seq += 1
             event_type = event.get("type")
             if event_type == "status":

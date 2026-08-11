@@ -163,20 +163,9 @@ class FollowSessionTests(unittest.TestCase):
                 expected_control_stage="commissioning",
             )
 
-    def test_production_rejects_a_commissioning_workspace_trajectory(self):
-        snapshot = valid_snapshot(
-            planning_scope="execution_strict",
-            execution_eligible=True,
-            input_source="live",
-            map_source="live_local_map",
-            control_stage="commissioning",
-            workspace_constraint="disabled_by_operator",
-        )
-
+    def test_retired_production_stage_is_not_a_valid_snapshot_contract(self):
         with self.assertRaisesRegex(ValueError, "control_stage"):
-            snapshot.validate_for_execution(
-                now_s=10.1, expected_control_stage="production"
-            )
+            valid_snapshot(control_stage="production")
 
 
 if __name__ == "__main__":

@@ -194,7 +194,7 @@ def load_planning_profile(
     _require_int("freshness.bucket_tip_max_age_ms", freshness["bucket_tip_max_age_ms"], 1, 60000)
     _require_number("freshness.octomap_timeout_s", freshness["octomap_timeout_s"], 0.1, 60.0)
     _require_number("obstacle_adapter.box_size_m", obstacle_adapter["box_size_m"], 0.001, 10.0)
-    _require_int("obstacle_adapter.max_obstacles", obstacle_adapter["max_obstacles"], 1, 1000000)
+    _require_int("obstacle_adapter.max_obstacles", obstacle_adapter["max_obstacles"], 0, 1000000)
     _require_number("planner.collision_radius_m", planner["collision_radius_m"], 0.000001, 10.0)
     _require_number("planner.step_size_m", planner["step_size_m"], 0.000001, 10.0)
     _require_number("planner.edge_check_step_m", planner["edge_check_step_m"], 0.000001, 10.0)

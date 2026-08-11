@@ -17,13 +17,10 @@ install(
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/HomePoseCatalog.msg"
-  "msg/JogHeartbeat.msg"
-  "msg/OperatorHeartbeat.msg"
   "msg/RuntimeStatus.msg"
   "msg/TargetSnapshot.msg"
   "msg/TrajectorySnapshot.msg"
   "action/Follow.action"
-  "action/HoldToJog.action"
   "action/ExecuteDig.action"
   "action/ExecuteDump.action"
   "action/ExcavationCycle.action"

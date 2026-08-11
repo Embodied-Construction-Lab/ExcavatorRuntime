@@ -109,9 +109,9 @@ def build_execution_snapshot_fields(
             raise ValueError("trajectory workspace constraint provenance is invalid")
     else:
         raise ValueError("trajectory workspace constraint provenance is invalid")
-    if control_stage == "production" and workspace_constraint != "field_validated":
-        raise ValueError("production trajectory requires field_validated workspace")
-    if control_stage == "commissioning" and workspace_constraint not in {
+    if control_stage != "commissioning":
+        raise ValueError("control_stage must be commissioning")
+    if workspace_constraint not in {
         "disabled_by_operator", "field_validated"
     }:
         raise ValueError("commissioning trajectory workspace constraint is invalid")

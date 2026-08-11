@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PC 侧 runtime bridge：接收 Orin 状态，回发动作，并可选发布 /joint_states。"""
+"""PC state bridge: receive Orin Machine State and optionally publish JointState."""
 
 from __future__ import annotations
 
@@ -19,12 +19,7 @@ from runtime_bridge.protocol import (
     MachineStatePacket,
     PacketDecodeError,
     decode_packet,
-    encode_packet,
-    make_zero_action,
 )
-from runtime_bridge.action_journal import ActionJournalUnavailable, RecordedUdpSender
-from runtime_bridge.live_control import evaluate_actuator_state
-from runtime_bridge.observation import load_machine_profile
 from runtime_bridge.runtime_config import DEFAULT_RUNTIME_CONFIG, load_runtime_config
 from runtime_bridge.ros_provenance import set_ros_header_stamp
 
@@ -47,9 +42,8 @@ def should_print_state(state_count: int, print_every: int) -> bool:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     """构造通信诊断入口参数。"""
-    parser = argparse.ArgumentParser(description="接收Orin状态包，可选回发零动作进行链路诊断。")
+    parser = argparse.ArgumentParser(description="接收 Orin 状态包并发布只读 PC 状态。")
     parser.add_argument("--config", type=Path, default=DEFAULT_RUNTIME_CONFIG, help="运行配置JSON")
-    parser.add_argument("--reply-zero", action="store_true", help="每收到状态后回发四维零动作")
     parser.add_argument("--publish-joint-states", action="store_true", help="把状态包关节角发布为ROS2 /joint_states")
     parser.add_argument(
         "--print-every",
@@ -107,10 +101,6 @@ class JointStatePublisher:
         if self.rclpy.ok():
             self.rclpy.shutdown()
 
-    def warn(self, message: str) -> None:
-        """把 live-shadow 诊断写入 /rosout，供 RViz Panel Logs 显示。"""
-        self.node.get_logger().warning(message, throttle_duration_sec=2.0)
-
 
 def write_latest_state(path: Path, state: ExcavatorStatePacket | MachineStatePacket) -> None:
     """写出最近状态，方便 smoke check 或人工排查。"""
@@ -119,48 +109,25 @@ def write_latest_state(path: Path, state: ExcavatorStatePacket | MachineStatePac
 
 
 def main() -> int:
-    """诊断入口：接收状态包，按需写JSON、发JointState和回传零动作。"""
+    """接收状态包，按需写 JSON 和发布 JointState。"""
     args = build_arg_parser().parse_args()
     try:
         config = load_runtime_config(args.config)
-        config.artifacts.require_machine_profile()
-        machine_profile = load_machine_profile(config.artifacts.machine_profile)
     except (OSError, ValueError) as exc:
         print(f"runtime diagnostic configuration error: {exc}", file=sys.stderr, flush=True)
         return 2
 
     recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     recv_sock.bind(config.network.state_endpoint)
-    send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    action_destination = config.network.action_endpoint
-    try:
-        action_sender = (
-            RecordedUdpSender(
-                send_sock,
-                action_destination,
-                journal_config=config.action_journal,
-                source="pc_runtime_bridge",
-            )
-            if args.reply_zero
-            else None
-        )
-    except OSError as exc:
-        print(f"runtime action journal startup failed: {exc}", file=sys.stderr, flush=True)
-        recv_sock.close()
-        send_sock.close()
-        return 2
     joint_state_publisher = JointStatePublisher() if args.publish_joint_states else None
     print_every = config.diagnostics.print_every if args.print_every is None else args.print_every
 
     state_count = 0
-    action_seq = 0
-    exit_code = 0
     print(
-        "pc runtime diagnostic started: "
-        f"state <- {config.network.state_endpoint}, action -> {action_destination}, "
-        f"reply_zero={args.reply_zero}, publish_joint_states={args.publish_joint_states}, "
-        f"print_every={print_every}, "
-        f"action_journal={action_sender.journal_path if action_sender else 'disabled'}",
+        "pc state bridge started: "
+        f"state <- {config.network.state_endpoint}, "
+        f"publish_joint_states={args.publish_joint_states}, "
+        f"print_every={print_every}, receive_only=true",
         flush=True,
     )
 
@@ -176,25 +143,13 @@ def main() -> int:
                 continue
 
             state_count += 1
-            if config.diagnostics.write_every > 0 and state_count % config.diagnostics.write_every == 0:
+            if (
+                config.diagnostics.write_every > 0
+                and state_count % config.diagnostics.write_every == 0
+            ):
                 write_latest_state(DEFAULT_LATEST_STATE, packet)
             if joint_state_publisher is not None:
                 joint_state_publisher.publish(packet)
-            actuator_decision = (
-                evaluate_actuator_state(packet, machine_profile)
-                if isinstance(packet, MachineStatePacket)
-                else None
-            )
-            if actuator_decision is not None and not actuator_decision.allowed:
-                message = f"PC motion model rejects actuator state: {actuator_decision.reason}"
-                if joint_state_publisher is not None:
-                    joint_state_publisher.warn(message)
-            if args.reply_zero:
-                # 关键：零动作只用于链路联调，不代表最终 ONNX 输出。
-                action = make_zero_action(action_seq, valid_for_ms=config.network.action_valid_ms)
-                action_sender.send(encode_packet(action))
-                action_seq += 1
-
             if should_print_state(state_count, print_every):
                 age_ms = int(time.time() * 1000) - packet.stamp_ms
                 if isinstance(packet, MachineStatePacket):
@@ -204,7 +159,7 @@ def main() -> int:
                         f"state[{state_count}] from {address}: seq={packet.seq}, age={age_ms}ms, "
                         f"estop={safety['estop']}, sensor_valid={safety['sensor_valid']}, "
                         f"control_enabled={safety['control_enabled']}, faults={safety['fault_flags']}, "
-                        f"actuator_gate={actuator_decision.reason if actuator_decision else 'unavailable'}",
+                        "pc_motion_gate=not_applicable",
                         flush=True,
                     )
                 else:
@@ -214,21 +169,11 @@ def main() -> int:
                     )
     except KeyboardInterrupt:
         print("pc runtime bridge stopped", flush=True)
-    except ActionJournalUnavailable as exc:
-        print(f"pc runtime bridge stopped: {exc}", file=sys.stderr, flush=True)
-        exit_code = 3
     finally:
         if joint_state_publisher is not None:
             joint_state_publisher.close()
-        if action_sender is not None:
-            try:
-                action_sender.close()
-            except ActionJournalUnavailable as exc:
-                print(f"pc runtime journal close failed: {exc}", file=sys.stderr, flush=True)
-                exit_code = 3
         recv_sock.close()
-        send_sock.close()
-    return exit_code
+    return 0
 
 
 if __name__ == "__main__":

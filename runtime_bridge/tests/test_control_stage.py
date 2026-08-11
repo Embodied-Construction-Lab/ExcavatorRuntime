@@ -15,13 +15,9 @@ class ControlStagePolicyTest(unittest.TestCase):
             frozenset({"rviz_adjusted", "field_validated"}),
         )
 
-    def test_production_enforces_validated_geometry_contracts(self):
-        policy = control_stage_policy("production")
-
-        self.assertTrue(policy.enforce_actuator_position_bounds)
-        self.assertTrue(policy.require_field_validated_targets)
-        self.assertTrue(policy.require_field_validated_workspace)
-        self.assertEqual(policy.allowed_target_statuses, frozenset({"field_validated"}))
+    def test_retired_production_stage_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "control_stage"):
+            control_stage_policy("production")
 
     def test_unknown_stage_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "control_stage"):

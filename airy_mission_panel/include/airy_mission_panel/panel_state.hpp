@@ -34,7 +34,6 @@ enum class OwnedOperation
   kExecuteDump,
   kFullMission,
   kReturnHome,
-  kManualJog,
 };
 
 enum class OperatorLogSeverity
@@ -73,13 +72,7 @@ struct RuntimeSnapshot
   bool estop{false};
   bool fault_free{false};
   bool fixed_actions_validated{false};
-  bool manual_jog_ready{false};
   std::string follow_control_mode;
-  double follow_speed_fraction{0.0};
-  std::vector<std::string> follow_allowed_actuators;
-  std::uint32_t follow_max_motion_ms{0};
-  bool follow_canary_ready{false};
-  bool follow_supervision_active{false};
   std::string motion_gate_reason;
   std::string last_rejection_reason;
   std::string last_rejection_message;
@@ -93,7 +86,6 @@ struct OperatorResources
   bool execute_dig_available{false};
   bool execute_dump_available{false};
   bool full_mission_available{false};
-  bool manual_jog_available{false};
 };
 
 struct PanelView
@@ -105,10 +97,8 @@ struct PanelView
   bool execute_dig_enabled{false};
   bool execute_dump_enabled{false};
   bool full_mission_enabled{false};
-  bool manual_jog_enabled{false};
   std::string safety_text;
   std::string follow_status_text;
-  std::string manual_jog_status_text;
 };
 
 PanelView derive_panel_view(

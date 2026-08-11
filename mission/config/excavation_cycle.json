@@ -11,7 +11,7 @@
       "radius_m": 0.25
     },
     "dump": {
-      "position_m": [-0.2, -1.4, 0.1],
+      "position_m": [-0.2, -1.2, 0.1],
       "normal": [0.0, 0.0, 1.0],
       "radius_m": 0.25
     }

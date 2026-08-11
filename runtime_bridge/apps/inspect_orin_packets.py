@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """旁路抓取并格式化 Orin -> PC 的 machine_state_v1 UDP 包。
 
-本工具通过 tcpdump 观察网络包，不绑定 18081，因此可与 pc_policy_bridge 并行运行。
+本工具通过 tcpdump 观察网络包，不绑定 18081，因此可与只读 PC 状态桥并行运行。
 需要以 root/cap_net_raw 权限执行 tcpdump。
 """
 

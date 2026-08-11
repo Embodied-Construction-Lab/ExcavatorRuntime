@@ -147,7 +147,7 @@ ExcavationPanel::ExcavationPanel(QWidget * parent)
   auto * tests_page = new QWidget(tabs_);
   auto * tests_layout = new QVBoxLayout(tests_page);
   auto * tests_warning = new QLabel(
-    "TEST ONLY — fixture sliders are no-motion; Live Hold-to-Jog sends bounded real commands.",
+    "TEST ONLY — fixture sliders publish simulated JointState and never command the machine.",
     tests_page);
   tests_warning->setWordWrap(true);
   tests_warning->setStyleSheet("font-weight: bold; color: #ff9966;");
@@ -191,40 +191,6 @@ ExcavationPanel::ExcavationPanel(QWidget * parent)
     this, &ExcavationPanel::resetJointTests);
   tests_layout->addWidget(joint_test_publish_button_);
   tests_layout->addWidget(joint_test_reset_button_);
-
-  auto * manual_jog_box = new QGroupBox("Live Hold-to-Jog — low speed", tests_page);
-  auto * manual_jog_layout = new QGridLayout(manual_jog_box);
-  manual_jog_status_label_ = new QLabel(
-    "LOCKED / requires live control and fresh machine state", manual_jog_box);
-  manual_jog_status_label_->setWordWrap(true);
-  manual_jog_layout->addWidget(manual_jog_status_label_, 0, 0, 1, 3);
-  const std::array<std::string, 3> jog_actuators{{"boom", "stick", "bucket"}};
-  for (std::size_t index = 0; index < jog_actuators.size(); ++index) {
-    const auto & actuator = jog_actuators[index];
-    auto * negative = new QPushButton("Action −", manual_jog_box);
-    auto * positive = new QPushButton("Action +", manual_jog_box);
-    negative->setObjectName(QString("manual_jog_%1_negative").arg(
-        QString::fromStdString(actuator)));
-    positive->setObjectName(QString("manual_jog_%1_positive").arg(
-        QString::fromStdString(actuator)));
-    negative->setToolTip("Hold to send a negative action; release stops");
-    positive->setToolTip("Hold to send a positive action; release stops");
-    manual_jog_buttons_[index * 2] = negative;
-    manual_jog_buttons_[index * 2 + 1] = positive;
-    manual_jog_layout->addWidget(
-      new QLabel(QString::fromStdString(actuator), manual_jog_box), index + 1, 0);
-    manual_jog_layout->addWidget(negative, index + 1, 1);
-    manual_jog_layout->addWidget(positive, index + 1, 2);
-    connect(negative, &QPushButton::pressed, this, [this, actuator, negative]() {
-      startManualJog(actuator, -1, negative);
-    });
-    connect(positive, &QPushButton::pressed, this, [this, actuator, positive]() {
-      startManualJog(actuator, 1, positive);
-    });
-    connect(negative, &QPushButton::released, this, &ExcavationPanel::stopManualJog);
-    connect(positive, &QPushButton::released, this, &ExcavationPanel::stopManualJog);
-  }
-  tests_layout->addWidget(manual_jog_box);
   tests_layout->addStretch();
   tabs_->addTab(tests_page, "Tests");
   layout->addStretch();
@@ -245,24 +211,12 @@ ExcavationPanel::ExcavationPanel(QWidget * parent)
   refresh_timer_ = new QTimer(this);
   connect(refresh_timer_, &QTimer::timeout, this, &ExcavationPanel::refreshView);
   refresh_timer_->start(100);
-  jog_heartbeat_timer_ = new QTimer(this);
-  jog_heartbeat_timer_->setInterval(50);
-  connect(
-    jog_heartbeat_timer_, &QTimer::timeout,
-    this, &ExcavationPanel::publishJogHeartbeat);
-  operator_heartbeat_timer_ = new QTimer(this);
-  operator_heartbeat_timer_->setInterval(50);
-  connect(
-    operator_heartbeat_timer_, &QTimer::timeout,
-    this, &ExcavationPanel::publishOperatorHeartbeat);
   refreshView();
 }
 
 ExcavationPanel::~ExcavationPanel()
 {
   refresh_timer_->stop();
-  jog_heartbeat_timer_->stop();
-  operator_heartbeat_timer_->stop();
   {
     std::unique_lock lock(callback_lifetime_->mutex);
     callback_lifetime_->alive = false;
@@ -279,9 +233,6 @@ ExcavationPanel::~ExcavationPanel()
   execute_dump_client_.reset();
   excavation_cycle_client_.reset();
   return_home_client_.reset();
-  hold_to_jog_client_.reset();
-  jog_heartbeat_publisher_.reset();
-  operator_heartbeat_publisher_.reset();
 }
 
 void ExcavationPanel::onInitialize()
@@ -307,196 +258,12 @@ void ExcavationPanel::onInitialize()
 
 void ExcavationPanel::startDig()
 {
-  startClickedPlanFollow("dig");
+  startPlanFollow("dig");
 }
 
 void ExcavationPanel::startDump()
 {
-  startClickedPlanFollow("dump");
-}
-
-void ExcavationPanel::startClickedPlanFollow(const std::string & phase)
-{
-  bool supervised_canary = false;
-  {
-    std::scoped_lock lock(mutex_);
-    if (owned_operation_ != OwnedOperation::kIdle) {
-      return;
-    }
-    supervised_canary = runtime_.follow_control_mode == "supervised_canary";
-    if (supervised_canary) {
-      follow_heartbeat_active_ = true;
-      follow_session_id_.clear();
-    }
-  }
-  if (supervised_canary) {
-    operator_heartbeat_timer_->start();
-  }
-  startPlanFollow(phase);
-  bool heartbeat_still_active = false;
-  {
-    std::scoped_lock lock(mutex_);
-    if (owned_operation_ != OwnedOperation::kPlanFollow) {
-      follow_heartbeat_active_ = false;
-    }
-    heartbeat_still_active = follow_heartbeat_active_;
-  }
-  if (!heartbeat_still_active) {
-    operator_heartbeat_timer_->stop();
-  }
-}
-
-void ExcavationPanel::publishOperatorHeartbeat()
-{
-  std::string session_id;
-  {
-    std::scoped_lock lock(mutex_);
-    if (!follow_heartbeat_active_) {
-      operator_heartbeat_timer_->stop();
-      return;
-    }
-    session_id = follow_session_id_;
-  }
-  if (session_id.empty()) {return;}
-  if (!node_ || !operator_heartbeat_publisher_) {
-    cancelOwnedOperation();
-    return;
-  }
-  airy_excavator_interfaces::msg::OperatorHeartbeat heartbeat;
-  heartbeat.header.stamp = node_->now();
-  heartbeat.behavior = "Follow";
-  heartbeat.session_id = session_id;
-  operator_heartbeat_publisher_->publish(heartbeat);
-}
-
-void ExcavationPanel::startManualJog(
-  const std::string & actuator, int direction, QPushButton * button)
-{
-  HoldToJog::Goal goal;
-  {
-    std::scoped_lock lock(mutex_);
-    if (
-      !node_ || !button || !panelViewLocked(node_->now()).manual_jog_enabled ||
-      !hold_to_jog_client_ || !hold_to_jog_client_->action_server_is_ready())
-    {
-      return;
-    }
-    jog_session_id_ = "rviz_jog_" + std::to_string(node_->now().nanoseconds());
-    goal.session_id = jog_session_id_;
-    goal.actuator = actuator;
-    goal.direction = static_cast<std::int8_t>(direction);
-    owned_operation_ = OwnedOperation::kManualJog;
-    active_manual_jog_button_ = button;
-    jog_heartbeat_active_ = true;
-    cancel_requested_ = false;
-    operation_text_ = "Holding manual jog: " + actuator +
-      (direction > 0 ? " action +" : " action -");
-    feedback_text_ = "Waiting for HoldToJog goal response";
-    result_text_ = "Release the button to stop";
-  }
-  publishJogHeartbeat();
-  jog_heartbeat_timer_->start();
-
-  rclcpp_action::Client<HoldToJog>::SendGoalOptions options;
-  options.goal_response_callback =
-    [this, lifetime = callback_lifetime_](HoldToJogGoalHandle::SharedPtr handle) {
-      std::shared_lock lifetime_lock(lifetime->mutex);
-      if (!lifetime->alive) {return;}
-      bool cancel = false;
-      {
-        std::scoped_lock lock(mutex_);
-        if (!handle) {
-          jog_heartbeat_active_ = false;
-          failOperationLocked("HoldToJog goal rejected");
-          return;
-        }
-        hold_to_jog_goal_handle_ = handle;
-        feedback_text_ = "HoldToJog accepted; release to stop";
-        cancel = cancel_requested_;
-      }
-      if (cancel) {hold_to_jog_client_->async_cancel_goal(handle);}
-    };
-  options.feedback_callback =
-    [this, lifetime = callback_lifetime_](
-    HoldToJogGoalHandle::SharedPtr,
-    const std::shared_ptr<const HoldToJog::Feedback> feedback) {
-      std::shared_lock lifetime_lock(lifetime->mutex);
-      if (!lifetime->alive) {return;}
-      std::scoped_lock lock(mutex_);
-      feedback_text_ = feedback->actuator + " pos=" +
-        std::to_string(feedback->position_m).substr(0, 7) + " m / cmd=" +
-        std::to_string(feedback->commanded_velocity).substr(0, 7) + " / datagrams=" +
-        std::to_string(feedback->action_datagrams);
-    };
-  options.result_callback =
-    [this, lifetime = callback_lifetime_](
-    const HoldToJogGoalHandle::WrappedResult & wrapped) {
-      std::shared_lock lifetime_lock(lifetime->mutex);
-      if (!lifetime->alive) {return;}
-      std::scoped_lock lock(mutex_);
-      jog_heartbeat_active_ = false;
-      hold_to_jog_goal_handle_.reset();
-      if (
-        wrapped.result && wrapped.result->quiescence_confirmed &&
-        ((wrapped.code == rclcpp_action::ResultCode::CANCELED &&
-        wrapped.result->outcome == HoldToJog::Result::OUTCOME_CANCELLED &&
-        wrapped.result->reason_code == "CANCELLED") ||
-        (wrapped.code == rclcpp_action::ResultCode::SUCCEEDED &&
-        wrapped.result->outcome == HoldToJog::Result::OUTCOME_SUCCEEDED &&
-        wrapped.result->reason_code == "MAX_HOLD_REACHED")))
-      {
-        finishOperationLocked(
-          "HoldToJog stopped safely / " + wrapped.result->reason_code +
-          " / before=" + std::to_string(wrapped.result->initial_position_m).substr(0, 8) +
-          " m / after=" + std::to_string(wrapped.result->final_position_m).substr(0, 8) +
-          " m / delta=" + std::to_string(wrapped.result->position_delta_m).substr(0, 9) +
-          " m / datagrams=" + std::to_string(wrapped.result->action_datagrams));
-      } else {
-        failOperationLocked(
-          wrapped.result ? "HoldToJog stopped: " + wrapped.result->reason_code :
-          "HoldToJog failed without Result");
-      }
-    };
-  hold_to_jog_client_->async_send_goal(goal, options);
-}
-
-void ExcavationPanel::stopManualJog()
-{
-  HoldToJogGoalHandle::SharedPtr handle;
-  {
-    std::scoped_lock lock(mutex_);
-    if (owned_operation_ != OwnedOperation::kManualJog) {return;}
-    jog_heartbeat_active_ = false;
-    cancel_requested_ = true;
-    feedback_text_ = "Released; requesting terminal zero";
-    handle = hold_to_jog_goal_handle_;
-  }
-  jog_heartbeat_timer_->stop();
-  if (handle) {hold_to_jog_client_->async_cancel_goal(handle);}
-}
-
-void ExcavationPanel::publishJogHeartbeat()
-{
-  std::string session_id;
-  QPushButton * active_button = nullptr;
-  {
-    std::scoped_lock lock(mutex_);
-    if (!jog_heartbeat_active_) {
-      jog_heartbeat_timer_->stop();
-      return;
-    }
-    session_id = jog_session_id_;
-    active_button = active_manual_jog_button_;
-  }
-  if (!active_button || !active_button->isDown() || !window()->isActiveWindow()) {
-    stopManualJog();
-    return;
-  }
-  if (!node_ || !jog_heartbeat_publisher_) {stopManualJog(); return;}
-  airy_excavator_interfaces::msg::JogHeartbeat heartbeat;
-  heartbeat.header.stamp = node_->now();
-  heartbeat.session_id = session_id;
-  jog_heartbeat_publisher_->publish(heartbeat);
+  startPlanFollow("dump");
 }
 
 void ExcavationPanel::startExecuteDig()
@@ -735,17 +502,6 @@ void ExcavationPanel::sendFollow(
   }
   Follow::Goal goal;
   goal.trajectory = trajectory;
-  {
-    std::scoped_lock lock(mutex_);
-    if (runtime_.follow_control_mode == "supervised_canary") {
-      if (!follow_heartbeat_active_) {
-        failOperationLocked("Follow supervision was released before execution");
-        return;
-      }
-      follow_session_id_ = trajectory.trajectory_id;
-    }
-  }
-  publishOperatorHeartbeat();
   rclcpp_action::Client<Follow>::SendGoalOptions options;
   options.goal_response_callback =
     [this, lifetime = callback_lifetime_](FollowGoalHandle::SharedPtr handle) {
@@ -1082,7 +838,6 @@ void ExcavationPanel::cancelOwnedOperation()
   ExcavationCycleGoalHandle::SharedPtr excavation_cycle;
   PlanGoalHandle::SharedPtr plan;
   ReturnHomeGoalHandle::SharedPtr return_home;
-  HoldToJogGoalHandle::SharedPtr hold_to_jog;
   {
     std::scoped_lock lock(mutex_);
     if (owned_operation_ == OwnedOperation::kIdle) {
@@ -1096,14 +851,6 @@ void ExcavationPanel::cancelOwnedOperation()
     excavation_cycle = excavation_cycle_goal_handle_;
     plan = plan_goal_handle_;
     return_home = return_home_goal_handle_;
-    hold_to_jog = hold_to_jog_goal_handle_;
-    if (owned_operation_ == OwnedOperation::kManualJog) {
-      jog_heartbeat_active_ = false;
-    }
-    if (owned_operation_ == OwnedOperation::kPlanFollow) {
-      follow_heartbeat_active_ = false;
-      follow_session_id_.clear();
-    }
   }
   const auto cancel_response =
     [this, lifetime = callback_lifetime_](const auto & response) {
@@ -1126,8 +873,6 @@ void ExcavationPanel::cancelOwnedOperation()
       plan_client_->async_cancel_goal(plan, cancel_response);
     } else if (return_home) {
       return_home_client_->async_cancel_goal(return_home, cancel_response);
-    } else if (hold_to_jog) {
-      hold_to_jog_client_->async_cancel_goal(hold_to_jog, cancel_response);
     }
   } catch (const std::exception & error) {
     std::scoped_lock lock(mutex_);
@@ -1172,11 +917,6 @@ void ExcavationPanel::finishOperationLocked(const std::string & result_text)
   execute_dump_goal_handle_.reset();
   excavation_cycle_goal_handle_.reset();
   return_home_goal_handle_.reset();
-  hold_to_jog_goal_handle_.reset();
-  jog_heartbeat_active_ = false;
-  jog_session_id_.clear();
-  follow_heartbeat_active_ = false;
-  follow_session_id_.clear();
   operation_text_ = "Idle";
   result_text_ = result_text;
 }
@@ -1224,8 +964,6 @@ PanelView ExcavationPanel::panelViewLocked(const rclcpp::Time & now) const
     resources.dig_target_available && resources.dump_target_available &&
     resources.execute_dig_available && resources.execute_dump_available &&
     excavation_cycle_client_ && excavation_cycle_client_->action_server_is_ready();
-  resources.manual_jog_available =
-    hold_to_jog_client_ && hold_to_jog_client_->action_server_is_ready();
   return derive_panel_view(runtime, resources, owned_operation_);
 }
 
@@ -1268,7 +1006,6 @@ void ExcavationPanel::refreshView()
   execute_dig_button_->setEnabled(view.execute_dig_enabled);
   execute_dump_button_->setEnabled(view.execute_dump_enabled);
   full_mission_button_->setEnabled(view.full_mission_enabled);
-  refreshManualJogControls(view);
   cancel_button_->setEnabled(view.cancel_enabled);
   safety_label_->setText(QString::fromStdString(view.safety_text));
   const bool safety_ready =
@@ -1283,15 +1020,12 @@ void ExcavationPanel::refreshView()
       runtime.motion_backend + " / datagrams=" +
       std::to_string(runtime.action_datagrams) + " / gate=" +
       runtime.motion_gate_reason + " / fixed_actions=" +
-      (runtime.fixed_actions_validated ? "field_validated" : "placeholder") +
-      " / manual_jog=" + (runtime.manual_jog_ready ? "ready" : "locked")));
+      (runtime.fixed_actions_validated ? "field_validated" : "placeholder")));
   operation_label_->setText(QString::fromStdString(operation_text));
   feedback_label_->setText(QString::fromStdString(feedback_text));
   result_label_->setText(QString::fromStdString(result_text));
   follow_status_label_->setText(QString::fromStdString(view.follow_status_text));
-  const bool supervised_canary = runtime.follow_control_mode == "supervised_canary";
-  follow_status_label_->setStyleSheet(
-    supervised_canary ? "font-weight: bold; color: #ffcc66;" : "");
+  follow_status_label_->setStyleSheet("");
 
   if (catalog_revision != rendered_home_catalog_revision_) {
     const auto previous = home_pose_combo_->currentText();

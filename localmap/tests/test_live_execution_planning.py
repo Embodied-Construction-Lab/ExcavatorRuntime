@@ -105,6 +105,20 @@ class LiveExecutionPlanningTests(unittest.TestCase):
         self.assertEqual(fields["map_source"], "live_local_map")
         self.assertEqual(fields["waypoint_tolerance_m"], 0.25)
 
+        with self.assertRaisesRegex(ValueError, "control_stage"):
+            build_execution_snapshot_fields(
+                trajectory,
+                target,
+                source_bucket_tip_stamp_s=9.8,
+                source_local_map_stamp_s=9.7,
+                inputs_frozen_at_s=10.0,
+                created_at_s=10.0,
+                waypoint_tolerance_m=0.25,
+                waypoint_dwell_s=0.3,
+                tracking_timeout_s=20.0,
+                control_stage="production",
+            )
+
         with self.assertRaisesRegex(ValueError, "workspace constraint provenance"):
             build_execution_snapshot_fields(
                 {**trajectory, "planner": {"reachable_workspace": None}},

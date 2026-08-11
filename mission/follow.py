@@ -79,7 +79,7 @@ class FollowTrajectorySnapshot:
             raise ValueError("mission_phase and task_mode mismatch")
         if self.planning_scope not in _PLANNING_SCOPES:
             raise ValueError("planning_scope is invalid")
-        if self.control_stage not in {"none", "commissioning", "production"}:
+        if self.control_stage not in {"none", "commissioning"}:
             raise ValueError("control_stage is invalid")
         if self.workspace_constraint not in {
             "none", "disabled_by_operator", "field_validated"
@@ -148,9 +148,7 @@ class FollowTrajectorySnapshot:
             raise ValueError("input_source/map_source must identify live inputs")
         if self.control_stage != expected_control_stage:
             raise ValueError("trajectory control_stage does not match runtime")
-        if expected_control_stage == "production":
-            workspace_valid = self.workspace_constraint == "field_validated"
-        elif expected_control_stage == "commissioning":
+        if expected_control_stage == "commissioning":
             workspace_valid = self.workspace_constraint in {
                 "disabled_by_operator", "field_validated"
             }

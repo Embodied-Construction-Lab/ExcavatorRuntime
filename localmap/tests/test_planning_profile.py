@@ -102,6 +102,25 @@ def write_profile_pair(project_root: Path, planning_data=None, perception_data=N
 
 
 class PlanningProfileTest(unittest.TestCase):
+    def test_deployed_profile_outputs_only_start_and_goal_waypoints(self):
+        profile = load_planning_profile()
+
+        self.assertEqual(profile.planner.waypoint_count, 2)
+        self.assertEqual(profile.obstacle_adapter.max_obstacles, 0)
+
+    def test_allows_zero_obstacles_for_demo_planning(self):
+        data = valid_planning_payload()
+        data["obstacle_adapter"]["max_obstacles"] = 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            profile = load_planning_profile(
+                write_profile_pair(project_root, planning_data=data),
+                project_root=project_root,
+            )
+
+        self.assertEqual(profile.obstacle_adapter.max_obstacles, 0)
+
     def test_derives_shared_contract_from_perception_profile(self):
         with tempfile.TemporaryDirectory() as directory:
             project_root = Path(directory)
