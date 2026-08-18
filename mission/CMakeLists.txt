@@ -71,6 +71,12 @@ install(
 )
 
 install(
+  PROGRAMS runtime_ros/run_plan_follow_live.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME run_plan_follow_live
+)
+
+install(
   PROGRAMS runtime_ros/send_return_home_goal.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME send_return_home_goal

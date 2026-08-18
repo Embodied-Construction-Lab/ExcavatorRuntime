@@ -112,6 +112,7 @@ def main() -> int:
     """接收状态包，按需写 JSON 和发布 JointState。"""
     args = build_arg_parser().parse_args()
     try:
+        # 读取并验证配置文件 runtime_bridge/config/runtime.json,包括网络端口和诊断打印间隔。
         config = load_runtime_config(args.config)
     except (OSError, ValueError) as exc:
         print(f"runtime diagnostic configuration error: {exc}", file=sys.stderr, flush=True)
@@ -132,11 +133,15 @@ def main() -> int:
     )
 
     try:
+        # UDP 接收循环，按配置打印、写出最近状态，并按需发布 JointState。
         while True:
             payload, address = recv_sock.recvfrom(4096)
             try:
+                # 协议里是二进制包，必须 decode_packet() 才能得到 ExcavatorStatePacket 或 MachineStatePacket。
+                # packet : seq, stamp_ms, 具体的状态数据(包括关节角度、速度、传感器状态等)
                 packet = decode_packet(payload)
             except PacketDecodeError as exc:
+                # 当 packet_type 无效时会抛出 PacketDecodeError并丢掉该包
                 print(f"drop invalid packet from {address}: {exc}", flush=True)
                 continue
             if not isinstance(packet, ExcavatorStatePacket | MachineStatePacket):
@@ -147,8 +152,10 @@ def main() -> int:
                 config.diagnostics.write_every > 0
                 and state_count % config.diagnostics.write_every == 0
             ):
+                # 按照write_every间隔输出状态
                 write_latest_state(DEFAULT_LATEST_STATE, packet)
             if joint_state_publisher is not None:
+                # 发布 ROS2 JointState，供 waji_description 计算 bucket tip。
                 joint_state_publisher.publish(packet)
             if should_print_state(state_count, print_every):
                 age_ms = int(time.time() * 1000) - packet.stamp_ms
