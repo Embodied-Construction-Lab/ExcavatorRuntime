@@ -31,7 +31,7 @@ enx00e04c266130                    enP8p1s0
 
 ## 2. 首次配置
 
-配置过程中保持双方 Wi-Fi 连接，不执行 `nmcli networking off` 或 `nmcli radio wifi off`。
+配置过程中保持双方 Wi-Fi 连接。
 建议保留一个使用 Orin Wi-Fi 地址的 SSH 终端，作为有线配置完成前的备用连接。
 
 PC：
