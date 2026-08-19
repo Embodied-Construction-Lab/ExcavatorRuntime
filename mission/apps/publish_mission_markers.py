@@ -22,7 +22,12 @@ except ModuleNotFoundError as exc:
 
 from mission.contract import MissionContractError, load_mission
 from mission.demo import load_demo_program
-from mission.markers import build_demo_marker_specs, build_mission_marker_specs
+from mission.markers import (
+    MissionMarkerStyleError,
+    build_demo_marker_specs,
+    build_mission_marker_specs,
+    load_mission_marker_style,
+)
 
 
 DEFAULT_MISSION = (
@@ -33,12 +38,17 @@ DEFAULT_DEMO = (
     Path(get_package_share_directory("airy_mission_runtime"))
     / "config/excavation_demo.json"
 )
+DEFAULT_MARKER_STYLE = (
+    Path(get_package_share_directory("airy_mission_runtime"))
+    / "config/marker_style.json"
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="发布文件式Mission的dig/dump RViz标记。")
     parser.add_argument("--mission", type=Path, default=DEFAULT_MISSION)
     parser.add_argument("--demo", type=Path)
+    parser.add_argument("--marker-style", type=Path, default=DEFAULT_MARKER_STYLE)
     parser.add_argument("--topic", default="/mission/target_markers")
     parser.add_argument("--rate-hz", type=float, default=2.0)
     return parser
@@ -57,11 +67,13 @@ class MissionMarkerPublisher(Node):
         topic: str,
         rate_hz: float,
         demo_path: Path | None = None,
+        marker_style_path: Path = DEFAULT_MARKER_STYLE,
     ) -> None:
         super().__init__("excavation_mission_marker_publisher")
         self.mission_path = mission_path
         self.demo_path = demo_path
-        self.last_mtime_ns: tuple[int, int | None] | None = None
+        self.marker_style_path = marker_style_path
+        self.last_mtime_ns: tuple[int, int | None, int | None] | None = None
         self.mission = None
         self.specs = ()
         marker_qos = QoSProfile(
@@ -85,28 +97,43 @@ class MissionMarkerPublisher(Node):
             mtime_ns = (
                 self.mission_path.stat().st_mtime_ns,
                 self.demo_path.stat().st_mtime_ns if self.demo_path else None,
+                (
+                    self.marker_style_path.stat().st_mtime_ns
+                    if self.marker_style_path.exists()
+                    else None
+                ),
             )
-            if self.specs and mtime_ns == self.last_mtime_ns:
+            if self.mission is not None and mtime_ns == self.last_mtime_ns:
                 return True
             mission = load_mission(self.mission_path)
             demo = load_demo_program(self.demo_path) if self.demo_path else None
-            self.mission = mission
-            self.specs = (
-                build_demo_marker_specs(demo)
-                if demo is not None
-                else build_mission_marker_specs(mission)
-            )
-            self.last_mtime_ns = mtime_ns
-            self.get_logger().info(
-                f"loaded mission {mission.mission_id}, status={mission.target_status}, sha256={mission.sha256[:12]}"
-            )
-            return True
         except (OSError, MissionContractError) as exc:
             self.specs = ()
             self.mission = None
             self.last_mtime_ns = None
             self.get_logger().error(f"Mission无效，清除目标标记: {exc}", throttle_duration_sec=5.0)
             return False
+
+        self.mission = mission
+        self.last_mtime_ns = mtime_ns
+        try:
+            style = load_mission_marker_style(self.marker_style_path)
+            self.specs = (
+                build_demo_marker_specs(demo, style)
+                if demo is not None
+                else build_mission_marker_specs(mission, style)
+            )
+        except (OSError, MissionMarkerStyleError) as exc:
+            self.specs = ()
+            self.get_logger().error(
+                f"目标显示样式无效，仅清除RViz标记: {exc}",
+                throttle_duration_sec=5.0,
+            )
+
+        self.get_logger().info(
+            f"loaded mission {mission.mission_id}, status={mission.target_status}, sha256={mission.sha256[:12]}"
+        )
+        return True
 
     def publish_markers(self) -> None:
         clear = Marker()
@@ -181,6 +208,7 @@ def main() -> int:
         args.topic,
         args.rate_hz,
         demo_path=args.demo,
+        marker_style_path=args.marker_style,
     )
     try:
         rclpy.spin(node)

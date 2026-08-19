@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import math
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -107,3 +109,36 @@ def load_live_planning_inputs(
         local_map=_freeze_json(local_map),
         bucket_tip=_freeze_json(bucket_tip),
     )
+
+
+def wait_for_live_planning_inputs(
+    profile: PlanningProfile,
+    *,
+    timeout_s: float,
+    poll_interval_s: float = 0.05,
+    now: Callable[[], float] = time.time,
+    sleep: Callable[[float], None] = time.sleep,
+) -> LivePlanningInputs:
+    """Wait until the authoritative live planning snapshot becomes fresh."""
+    if not math.isfinite(timeout_s) or timeout_s <= 0.0:
+        raise ValueError("timeout_s must be a positive finite number")
+    if not math.isfinite(poll_interval_s) or poll_interval_s <= 0.0:
+        raise ValueError("poll_interval_s must be a positive finite number")
+    started_at_s = now()
+    if not math.isfinite(started_at_s):
+        raise ValueError("now() must return a finite number")
+    deadline_s = started_at_s + timeout_s
+    last_error: Exception | None = None
+    while True:
+        current_s = now()
+        try:
+            return load_live_planning_inputs(profile, now_s=current_s)
+        except (OSError, json.JSONDecodeError, PlanningInputError) as exc:
+            last_error = exc
+        remaining_s = deadline_s - current_s
+        if remaining_s <= 0.0:
+            raise PlanningInputError(
+                "live planning inputs did not become fresh before timeout: "
+                f"{last_error}"
+            ) from last_error
+        sleep(min(poll_interval_s, remaining_s))

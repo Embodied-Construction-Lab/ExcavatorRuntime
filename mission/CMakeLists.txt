@@ -131,6 +131,10 @@ if(BUILD_TESTING)
   )
   ament_add_pytest_test(test_ros_entrypoints tests/test_ros_entrypoints.py)
   ament_add_pytest_test(
+    test_run_plan_follow_live
+    tests/test_run_plan_follow_live.py
+  )
+  ament_add_pytest_test(
     test_return_home_action_integration
     tests/test_return_home_action_integration.py
     TIMEOUT 30

@@ -188,7 +188,10 @@ ros2 run airy_mission_runtime run_plan_follow_live dig \
 
 该入口要求 Runtime Status 为 `control/orin_edge` 且已显式授权，只接受
 `execution_eligible=true` 的同一 Mission Plan Result，并在返回成功前要求
-`quiescence_confirmed=true`。ACT 示教前的 RL 定位通常由 `excavator-il` 的
+`quiescence_confirmed=true`。发送 Plan 前还会按 `airy_localmap` 安装的
+`config/planning.json` 等待 LocalMap 和 bucket-tip 输入满足新鲜度门限；超时时不会创建
+Plan/Follow 客户端。仅诊断其他配置时可用 `--planning-profile <path>` 覆盖。
+ACT 示教前的 RL 定位通常由 `excavator-il` 的
 `scripts/collect_guided_episode.py` 调用，不需要人工重复执行本命令。
 
 `transport_home` 当前是全零关节角的 `placeholder`，仅供离线观察。点击滑块的 Reset 后，
