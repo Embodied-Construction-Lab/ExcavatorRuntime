@@ -62,7 +62,12 @@ class PlanFollowShadowClient(Node):
         self._executor.add_node(self)
 
     def run_phase(
-        self, *, mission: ExcavationMission, phase: str, wait_s: float
+        self,
+        *,
+        mission: ExcavationMission,
+        phase: str,
+        wait_s: float,
+        target_id: str | None = None,
     ) -> PlanFollowOutcome:
         plan_handle = None
         plan_result_future = None
@@ -83,6 +88,7 @@ class PlanFollowShadowClient(Node):
                     mission,
                     phase,
                     planning_scope=self._PLANNING_SCOPE,
+                    target_id=target_id,
                 ),
                 feedback_callback=_print_plan_feedback,
             )
@@ -315,13 +321,14 @@ def _build_plan_goal(
     phase: str,
     *,
     planning_scope: str = "preview_global",
+    target_id: str | None = None,
 ) -> Plan.Goal:
     target = mission.targets[phase]
     goal = Plan.Goal()
     goal.planning_scope = planning_scope
     goal.target.header.frame_id = mission.frame_id
     goal.target.header.stamp = node.get_clock().now().to_msg()
-    goal.target.target_id = f"{mission.mission_id}:{phase}"
+    goal.target.target_id = target_id or f"{mission.mission_id}:{phase}"
     goal.target.target_kind = phase
     goal.target.target_status = mission.target_status
     goal.target.mission_id = mission.mission_id

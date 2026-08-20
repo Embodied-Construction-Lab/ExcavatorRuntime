@@ -135,3 +135,60 @@ def test_live_cli_rejects_stale_inputs_before_creating_ros_client(
         ("load_profile", planning_profile),
         ("inputs_rejected", 3.0),
     ]
+
+
+def test_live_cli_selects_one_configured_demo_dig_point(monkeypatch, tmp_path):
+    calls = []
+    profile = object()
+    demo_path = Path(__file__).resolve().parents[1] / "config/excavation_demo.json"
+
+    monkeypatch.setattr(
+        run_plan_follow_live,
+        "load_planning_profile",
+        lambda _path: profile,
+    )
+    monkeypatch.setattr(
+        run_plan_follow_live,
+        "wait_for_live_planning_inputs",
+        lambda _profile, *, timeout_s: None,
+    )
+    monkeypatch.setattr(run_plan_follow_live.rclpy, "init", lambda **_kwargs: None)
+    monkeypatch.setattr(run_plan_follow_live.rclpy, "ok", lambda: True)
+    monkeypatch.setattr(run_plan_follow_live.rclpy, "shutdown", lambda: None)
+
+    class FakeClient:
+        def run_phase(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(
+                follow_result=SimpleNamespace(
+                    reason_code="SUCCEEDED",
+                    quiescence_confirmed=True,
+                    action_datagrams=1,
+                )
+            )
+
+        def destroy_node(self):
+            return None
+
+    monkeypatch.setattr(run_plan_follow_live, "PlanFollowLiveClient", FakeClient)
+
+    result = run_plan_follow_live.run(
+        [
+            "dig",
+            "--demo",
+            str(demo_path),
+            "--dig-point",
+            "dig_03",
+            "--planning-profile",
+            str(tmp_path / "planning.json"),
+            "--wait-s",
+            "3",
+        ]
+    )
+
+    assert result == 0
+    assert len(calls) == 1
+    selected = calls[0]
+    assert selected["phase"] == "dig"
+    assert selected["target_id"] == "field_demo_001:dig:dig_03"
+    assert selected["mission"].targets["dig"].position_m == (1.0, -0.2, 0.0)
