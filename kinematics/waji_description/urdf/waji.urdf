@@ -35,7 +35,7 @@
     </inertial>
     <visual>
       <origin
-        xyz="0 0 0.455"
+        xyz="0 0 0.278"
         rpy="0 0 0" />
       <geometry>
         <mesh
