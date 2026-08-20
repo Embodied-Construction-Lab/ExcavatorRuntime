@@ -24,7 +24,7 @@
     }
   ],
   "dump_target": {
-    "position_m": [-0.2, -1.2, 0.1],
+    "position_m": [-0.2, -1.35, 0.1],
     "normal": [0.0, 0.0, 1.0],
     "radius_m": 0.25
   },
