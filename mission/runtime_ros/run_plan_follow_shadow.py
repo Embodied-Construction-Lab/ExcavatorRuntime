@@ -37,8 +37,13 @@ class PlanFollowOutcome:
 class PlanFollowShadowClient(Node):
     """Causally bind one Plan Result to one shadow Follow Goal."""
 
+    _NODE_NAME = "plan_follow_shadow_client"
+    _RUNTIME_LABEL = "Shadow"
+    _PLANNING_SCOPE = "preview_global"
+    _EXECUTION_ELIGIBLE = False
+
     def __init__(self, *, context=None) -> None:
-        super().__init__("plan_follow_shadow_client", context=context)
+        super().__init__(self._NODE_NAME, context=context)
         self._runtime_status = None
         status_qos = QoSProfile(
             depth=1,
@@ -57,7 +62,12 @@ class PlanFollowShadowClient(Node):
         self._executor.add_node(self)
 
     def run_phase(
-        self, *, mission: ExcavationMission, phase: str, wait_s: float
+        self,
+        *,
+        mission: ExcavationMission,
+        phase: str,
+        wait_s: float,
+        target_id: str | None = None,
     ) -> PlanFollowOutcome:
         plan_handle = None
         plan_result_future = None
@@ -67,13 +77,19 @@ class PlanFollowShadowClient(Node):
             raise ValueError("phase must be dig or dump")
         if wait_s <= 0.0:
             raise ValueError("wait_s must be positive")
-        self._require_shadow_status(wait_s)
+        self._require_runtime_status(wait_s)
         if not self._plan.wait_for_server(timeout_sec=wait_s):
             raise RuntimeError("Plan Action Server is unavailable")
 
         try:
             plan_send = self._plan.send_goal_async(
-                _build_plan_goal(self, mission, phase),
+                _build_plan_goal(
+                    self,
+                    mission,
+                    phase,
+                    planning_scope=self._PLANNING_SCOPE,
+                    target_id=target_id,
+                ),
                 feedback_callback=_print_plan_feedback,
             )
             plan_handle = self._wait(plan_send, wait_s, "Plan goal response")
@@ -86,8 +102,7 @@ class PlanFollowShadowClient(Node):
             plan_response = self._wait(plan_result_future, wait_s, "Plan result")
             plan_handle = None
             plan_result = plan_response.result
-            if plan_result.action_datagrams != 0:
-                raise RuntimeError("Plan violated shadow no-datagram invariant")
+            self._validate_action_datagrams("Plan", plan_result.action_datagrams)
             if (
                 plan_response.status != GoalStatus.STATUS_SUCCEEDED
                 or plan_result.outcome != Plan.Result.OUTCOME_SUCCEEDED
@@ -95,7 +110,14 @@ class PlanFollowShadowClient(Node):
             ):
                 raise RuntimeError(f"Plan failed: {plan_result.reason_code}")
             trajectory = plan_result.trajectory
-            _validate_trajectory(self, mission, phase, trajectory)
+            _validate_trajectory(
+                self,
+                mission,
+                phase,
+                trajectory,
+                execution_eligible=self._EXECUTION_ELIGIBLE,
+                planning_scope=self._PLANNING_SCOPE,
+            )
             print(
                 f"plan result: SUCCEEDED trajectory_id={trajectory.trajectory_id} "
                 f"waypoints={len(trajectory.waypoints)} action_datagrams=0",
@@ -104,10 +126,17 @@ class PlanFollowShadowClient(Node):
 
             if not self._follow.wait_for_server(timeout_sec=wait_s):
                 raise RuntimeError("Follow Action Server is unavailable")
-            self._require_shadow_status(
+            self._require_runtime_status(
                 wait_s, expected_input_source=trajectory.input_source
             )
-            _validate_trajectory(self, mission, phase, trajectory)
+            _validate_trajectory(
+                self,
+                mission,
+                phase,
+                trajectory,
+                execution_eligible=self._EXECUTION_ELIGIBLE,
+                planning_scope=self._PLANNING_SCOPE,
+            )
             follow_goal = Follow.Goal()
             follow_goal.trajectory = copy.deepcopy(trajectory)
             follow_send = self._follow.send_goal_async(
@@ -129,8 +158,9 @@ class PlanFollowShadowClient(Node):
             )
             follow_handle = None
             follow_result = follow_response.result
-            if follow_result.action_datagrams != 0:
-                raise RuntimeError("Follow violated shadow no-datagram invariant")
+            self._validate_action_datagrams(
+                "Follow", follow_result.action_datagrams
+            )
             if not follow_result.quiescence_confirmed:
                 raise RuntimeError("Follow Result was published before quiescence")
             if (
@@ -141,7 +171,7 @@ class PlanFollowShadowClient(Node):
                 raise RuntimeError(f"Follow failed: {follow_result.reason_code}")
             print(
                 "follow result: SUCCEEDED quiescence_confirmed=True "
-                "action_datagrams=0",
+                f"action_datagrams={follow_result.action_datagrams}",
                 flush=True,
             )
             return PlanFollowOutcome(
@@ -169,18 +199,40 @@ class PlanFollowShadowClient(Node):
     def _on_runtime_status(self, message: RuntimeStatus) -> None:
         self._runtime_status = message
 
-    def _require_shadow_status(
+    def _require_runtime_status(
         self, wait_s: float, *, expected_input_source: str | None = None
     ) -> None:
         deadline = time.monotonic() + wait_s
-        while self._runtime_status is None and time.monotonic() < deadline:
+        status_received = False
+        while time.monotonic() < deadline:
             self._executor.spin_once(timeout_sec=0.05)
-        status = self._runtime_status
-        if status is None:
-            raise RuntimeError("Shadow RuntimeStatus is unavailable")
-        status_stamp_s = status.header.stamp.sec + status.header.stamp.nanosec * 1e-9
-        status_age_s = self.get_clock().now().nanoseconds * 1e-9 - status_stamp_s
-        valid = (
+            status = self._runtime_status
+            if status is None:
+                continue
+            status_received = True
+            status_stamp_s = (
+                status.header.stamp.sec + status.header.stamp.nanosec * 1e-9
+            )
+            status_age_s = (
+                self.get_clock().now().nanoseconds * 1e-9 - status_stamp_s
+            )
+            valid = self._runtime_status_is_valid(
+                status, status_stamp_s, status_age_s
+            )
+            if expected_input_source is not None:
+                valid = valid and status.input_source == expected_input_source
+            if valid:
+                return
+        if not status_received:
+            raise RuntimeError(f"{self._RUNTIME_LABEL} RuntimeStatus is unavailable")
+        raise RuntimeError(
+            f"{self._RUNTIME_LABEL} RuntimeStatus safety contract is not satisfied"
+        )
+
+    def _runtime_status_is_valid(
+        self, status: RuntimeStatus, status_stamp_s: float, status_age_s: float
+    ) -> bool:
+        return (
             status.header.frame_id == "machine_root_ros"
             and status_stamp_s > 0.0
             and 0.0 <= status_age_s <= 1.5
@@ -192,10 +244,12 @@ class PlanFollowShadowClient(Node):
             and status.action_datagrams == 0
             and not status.active_behavior
         )
-        if expected_input_source is not None:
-            valid = valid and status.input_source == expected_input_source
-        if not valid:
-            raise RuntimeError("Shadow RuntimeStatus safety contract is not satisfied")
+
+    def _validate_action_datagrams(self, behavior: str, count: int) -> None:
+        if count != 0:
+            raise RuntimeError(
+                f"{behavior} violated shadow no-datagram invariant"
+            )
 
     def destroy_node(self):
         self._executor.remove_node(self)
@@ -218,8 +272,7 @@ class PlanFollowShadowClient(Node):
         }:
             raise RuntimeError(f"{behavior} Goal could not be cancelled")
         result = terminal.result
-        if result.action_datagrams != 0:
-            raise RuntimeError(f"{behavior} cancel violated no-datagram invariant")
+        self._validate_action_datagrams(behavior, result.action_datagrams)
         if behavior == "Follow" and not result.quiescence_confirmed:
             raise RuntimeError("Follow cancel Result was published before quiescence")
         expected = {
@@ -231,13 +284,51 @@ class PlanFollowShadowClient(Node):
             raise RuntimeError(f"{behavior} cancel returned an inconsistent terminal state")
 
 
-def _build_plan_goal(node: Node, mission: ExcavationMission, phase: str) -> Plan.Goal:
+class PlanFollowLiveClient(PlanFollowShadowClient):
+    """Causally bind one execution-strict Plan Result to live Orin Follow."""
+
+    _NODE_NAME = "plan_follow_live_client"
+    _RUNTIME_LABEL = "Live"
+    _PLANNING_SCOPE = "execution_strict"
+    _EXECUTION_ELIGIBLE = True
+
+    def _runtime_status_is_valid(
+        self, status: RuntimeStatus, status_stamp_s: float, status_age_s: float
+    ) -> bool:
+        return (
+            status.header.frame_id == "machine_root_ros"
+            and status_stamp_s > 0.0
+            and 0.0 <= status_age_s <= 1.5
+            and status.execution_mode == "control"
+            and status.motion_backend == "orin_edge"
+            and status.motion_authorized
+            and status.sender_constructed
+            and status.quiescent
+            and not status.active_behavior
+            and status.input_source == "live"
+        )
+
+    def _validate_action_datagrams(self, behavior: str, count: int) -> None:
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise RuntimeError(f"{behavior} action_datagrams is invalid")
+        if behavior == "Plan" and count != 0:
+            raise RuntimeError("Plan must not emit action datagrams")
+
+
+def _build_plan_goal(
+    node: Node,
+    mission: ExcavationMission,
+    phase: str,
+    *,
+    planning_scope: str = "preview_global",
+    target_id: str | None = None,
+) -> Plan.Goal:
     target = mission.targets[phase]
     goal = Plan.Goal()
-    goal.planning_scope = "preview_global"
+    goal.planning_scope = planning_scope
     goal.target.header.frame_id = mission.frame_id
     goal.target.header.stamp = node.get_clock().now().to_msg()
-    goal.target.target_id = f"{mission.mission_id}:{phase}"
+    goal.target.target_id = target_id or f"{mission.mission_id}:{phase}"
     goal.target.target_kind = phase
     goal.target.target_status = mission.target_status
     goal.target.mission_id = mission.mission_id
@@ -258,13 +349,21 @@ def _validate_trajectory(
     mission: ExcavationMission,
     phase: str,
     trajectory,
+    *,
+    execution_eligible: bool = False,
+    planning_scope: str = "preview_global",
 ) -> None:
     if trajectory.trajectory_sha256 != trajectory_snapshot_message_sha256(
         trajectory
     ):
         raise ValueError("Plan Result trajectory digest mismatch")
-    if trajectory.execution_eligible:
-        raise ValueError("shadow Follow requires execution_eligible=false")
+    if trajectory.execution_eligible is not execution_eligible:
+        expected = "true" if execution_eligible else "false"
+        raise ValueError(f"Follow requires execution_eligible={expected}")
+    if trajectory.planning_scope != planning_scope:
+        raise ValueError(
+            f"Plan Result planning_scope must be {planning_scope}"
+        )
     if (
         trajectory.mission_id != mission.mission_id
         or trajectory.mission_sha256 != mission.sha256
@@ -310,13 +409,15 @@ def _print_follow_feedback(message) -> None:
     )
 
 
-def build_arg_parser() -> argparse.ArgumentParser:
+def build_arg_parser(
+    description: str = "Run one causally bound Plan→Follow cycle in shadow mode.",
+) -> argparse.ArgumentParser:
     default_mission = (
         get_package_share_directory("airy_mission_runtime")
         + "/config/excavation_cycle.json"
     )
     parser = argparse.ArgumentParser(
-        description="Run one causally bound Plan→Follow cycle in shadow mode."
+        description=description
     )
     parser.add_argument("phase", choices=("dig", "dump"))
     parser.add_argument("--mission", default=default_mission)

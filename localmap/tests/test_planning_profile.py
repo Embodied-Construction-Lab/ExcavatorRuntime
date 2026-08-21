@@ -102,10 +102,10 @@ def write_profile_pair(project_root: Path, planning_data=None, perception_data=N
 
 
 class PlanningProfileTest(unittest.TestCase):
-    def test_deployed_profile_outputs_only_start_and_goal_waypoints(self):
+    def test_deployed_profile_outputs_three_waypoints_without_enabling_obstacles(self):
         profile = load_planning_profile()
 
-        self.assertEqual(profile.planner.waypoint_count, 2)
+        self.assertEqual(profile.planner.waypoint_count, 3)
         self.assertEqual(profile.obstacle_adapter.max_obstacles, 0)
 
     def test_allows_zero_obstacles_for_demo_planning(self):

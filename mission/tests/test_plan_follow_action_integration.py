@@ -19,7 +19,10 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 
 from mission.contract import load_mission
-from mission.runtime_ros.run_plan_follow_shadow import PlanFollowShadowClient
+from mission.runtime_ros.run_plan_follow_shadow import (
+    PlanFollowLiveClient,
+    PlanFollowShadowClient,
+)
 
 
 MISSION_PATH = Path(__file__).resolve().parents[1] / "config/excavation_cycle.json"
@@ -29,6 +32,7 @@ class _ActionFixture(Node):
     def __init__(self, *, context, hold_follow=False, shadow_status=True):
         super().__init__("plan_follow_action_fixture", context=context)
         self.hold_follow = hold_follow
+        self.follow_action_datagrams = 0
         self.follow_cancelled = threading.Event()
         self.release_follow = threading.Event()
         mission = load_mission(MISSION_PATH)
@@ -43,6 +47,7 @@ class _ActionFixture(Node):
             position=(9.0, 0.3, 0.2),
         )
         self.followed = []
+        self.plan_scopes = []
         self.plan_requests = 0
         status_qos = QoSProfile(
             depth=1,
@@ -76,6 +81,36 @@ class _ActionFixture(Node):
             execute_callback=self._follow,
             cancel_callback=lambda _request: CancelResponse.ACCEPT,
         )
+
+    def enable_live_contract(self):
+        now = self.get_clock().now()
+        self.plan_snapshot.header.stamp = now.to_msg()
+        self.plan_snapshot.planning_scope = "execution_strict"
+        self.plan_snapshot.control_stage = "commissioning"
+        self.plan_snapshot.workspace_constraint = "disabled_by_operator"
+        self.plan_snapshot.execution_eligible = True
+        self.plan_snapshot.source_bucket_tip_stamp = now.to_msg()
+        self.plan_snapshot.source_local_map_stamp = now.to_msg()
+        self.plan_snapshot.inputs_frozen_at = now.to_msg()
+        self.plan_snapshot.valid_until = rclpy.time.Time(
+            nanoseconds=now.nanoseconds + 5_000_000_000
+        ).to_msg()
+        self.plan_snapshot.input_source = "live"
+        self.plan_snapshot.map_source = "live_local_map"
+        self.plan_snapshot.trajectory_sha256 = trajectory_snapshot_message_sha256(
+            self.plan_snapshot
+        )
+        status = RuntimeStatus()
+        status.header.frame_id = "machine_root_ros"
+        status.header.stamp = now.to_msg()
+        status.input_source = "live"
+        status.execution_mode = "control"
+        status.motion_backend = "orin_edge"
+        status.motion_authorized = True
+        status.sender_constructed = True
+        status.quiescent = True
+        status.action_datagrams = 0
+        self.status_publisher.publish(status)
 
     def _snapshot(self, mission_sha256, trajectory_id, *, position):
         now = self.get_clock().now()
@@ -112,6 +147,7 @@ class _ActionFixture(Node):
 
     def _plan(self, goal_handle):
         self.plan_requests += 1
+        self.plan_scopes.append(goal_handle.request.planning_scope)
         self.preview_publisher.publish(self.preview_snapshot)
         result = Plan.Result()
         result.outcome = Plan.Result.OUTCOME_SUCCEEDED
@@ -141,7 +177,7 @@ class _ActionFixture(Node):
         result.outcome = Follow.Result.OUTCOME_SUCCEEDED
         result.reason_code = "SUCCEEDED"
         result.quiescence_confirmed = True
-        result.action_datagrams = 0
+        result.action_datagrams = self.follow_action_datagrams
         goal_handle.succeed()
         return result
 
@@ -172,6 +208,63 @@ def test_plan_follow_uses_the_per_goal_result_instead_of_the_preview_topic():
         assert fixture.followed[0].trajectory_id == "per-goal-result"
         assert fixture.followed[0].waypoints != fixture.preview_snapshot.waypoints
     finally:
+        client.destroy_node()
+        executor.shutdown(timeout_sec=1.0)
+        thread.join(timeout=1.0)
+        fixture.destroy_node()
+        rclpy.shutdown(context=context)
+
+
+def test_live_plan_follow_uses_execution_eligible_trajectory_and_confirms_quiescence():
+    context = rclpy.context.Context()
+    rclpy.init(context=context)
+    fixture = _ActionFixture(context=context, shadow_status=False)
+    fixture.enable_live_contract()
+    fixture.follow_action_datagrams = 7
+    executor = MultiThreadedExecutor(num_threads=3, context=context)
+    executor.add_node(fixture)
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread.start()
+    client = PlanFollowLiveClient(context=context)
+    try:
+        outcome = client.run_phase(
+            mission=load_mission(MISSION_PATH), phase="dig", wait_s=3.0
+        )
+
+        assert outcome.follow_result.quiescence_confirmed
+        assert outcome.follow_result.action_datagrams == 7
+        assert len(fixture.followed) == 1
+        assert fixture.followed[0].planning_scope == "execution_strict"
+        assert fixture.followed[0].execution_eligible is True
+        assert fixture.plan_scopes == ["execution_strict"]
+    finally:
+        client.destroy_node()
+        executor.shutdown(timeout_sec=1.0)
+        thread.join(timeout=1.0)
+        fixture.destroy_node()
+        rclpy.shutdown(context=context)
+
+
+def test_live_plan_follow_waits_for_runtime_to_become_ready_within_deadline():
+    context = rclpy.context.Context()
+    rclpy.init(context=context)
+    fixture = _ActionFixture(context=context, shadow_status=False)
+    executor = MultiThreadedExecutor(num_threads=3, context=context)
+    executor.add_node(fixture)
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread.start()
+    ready_timer = threading.Timer(0.15, fixture.enable_live_contract)
+    ready_timer.start()
+    client = PlanFollowLiveClient(context=context)
+    try:
+        outcome = client.run_phase(
+            mission=load_mission(MISSION_PATH), phase="dig", wait_s=2.0
+        )
+
+        assert outcome.follow_result.quiescence_confirmed
+        assert fixture.plan_scopes == ["execution_strict"]
+    finally:
+        ready_timer.cancel()
         client.destroy_node()
         executor.shutdown(timeout_sec=1.0)
         thread.join(timeout=1.0)

@@ -197,6 +197,34 @@ PC 的 ROS launch 日志自动保存在：
 出现问题时至少保留：Orin stdout、`edge_runtime.jsonl`、PC `~/.ros/log/latest/`、测试目标、
 现场视频和大致发生时间。
 
+### 0.6 RL Follow 到 ACT 采集的交接信息
+
+ACT 数据的初始姿态应覆盖 RL Follow 到达 Dig 目标后的终止分布。现有链路可直接提供以下证据：
+
+- 权威 Dig 目标：`mission/config/excavation_cycle.json` 的 `targets.dig`，坐标系为
+  `machine_root_ros`，单位为米；
+- Follow 运行反馈：`/excavator/follow` 的 Feedback 包含实时 `bucket_tip`、
+  `current_waypoint_index` 和 `distance_m`；Result 包含 `final_waypoint_index`、
+  `final_distance_m` 与 `quiescence_confirmed`，Panel 的 Action 结果会显示终态；
+- 最新机器状态：`runtime_bridge/exports/latest_state.json`，包含四关节位置/速度与安全状态；
+- 最新铲尖位置：ROS topic `/bucket_tip_pose_machine_root_ros`，同时由 bridge 写入
+  `localmap/exports/live_latest/bucket_tip.live.json`。
+
+Follow 完成且 Result 为成功后，可在 PC Operator 仍运行时检查：
+
+```bash
+python3 -m json.tool mission/config/excavation_cycle.json
+python3 -m json.tool runtime_bridge/exports/latest_state.json
+python3 -m json.tool localmap/exports/live_latest/bucket_tip.live.json
+ros2 topic echo /bucket_tip_pose_machine_root_ros --once
+```
+
+进入 ACT 采集前必须先停止 Orin 的 RL Runtime，确认它已经释放 `/dev/ttyTHS1`，再启动
+`excavator-il` Collector；切换进程期间不要改变机构姿态。此时直接采集即可继承真实 RL 终止姿态。
+若需要人工覆盖终点附近的扰动分布，使用 `excavator-il` 引导脚本的可选“预定位”阶段；预定位
+发生在正式 Episode 创建前，不进入 ACT 训练数据。不要把一个固定关节角复制到全部 Episode，
+而应保留 Follow 实际终点误差、铲尖位置和关节姿态的合理变化。
+
 ## 1. 准备环境
 
 ```bash

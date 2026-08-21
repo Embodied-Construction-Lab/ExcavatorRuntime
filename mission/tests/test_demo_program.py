@@ -82,6 +82,7 @@ def test_active_demo_program_uses_current_right_handed_target_contract():
     assert program.frame_id == "machine_root_ros"
     assert program.target_status in {"rviz_adjusted", "field_validated"}
     assert len(program.dig_points) >= 1
+    assert program.dump_target.position_m == pytest.approx((-0.2, -1.35, 0.1))
     assert program.limits.waypoint_tolerance_m == pytest.approx(0.25)
 
 

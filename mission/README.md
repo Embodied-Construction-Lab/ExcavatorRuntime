@@ -178,6 +178,22 @@ No-Motion Backend；不移动滑块时会在规划轨迹的 `tracking_timeout_s`
 属于预期的 fail-closed 行为。超时或 Ctrl-C 会取消已经接受的 Goal 并等待终态；成功、失败
 或取消均必须保持 `action_datagrams=0`。
 
+真机 `live_commissioning` 已运行且 Orin Edge Runtime ready 时，可用对应的单阶段客户端执行一次
+execution-strict Follow：
+
+```bash
+ros2 run airy_mission_runtime run_plan_follow_live dig \
+  --mission /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar/mission/config/excavation_cycle.json
+```
+
+该入口要求 Runtime Status 为 `control/orin_edge` 且已显式授权，只接受
+`execution_eligible=true` 的同一 Mission Plan Result，并在返回成功前要求
+`quiescence_confirmed=true`。发送 Plan 前还会按 `airy_localmap` 安装的
+`config/planning.json` 等待 LocalMap 和 bucket-tip 输入满足新鲜度门限；超时时不会创建
+Plan/Follow 客户端。仅诊断其他配置时可用 `--planning-profile <path>` 覆盖。
+ACT 示教前的 RL 定位通常由 `excavator-il` 的
+`scripts/collect_guided_episode.py` 调用，不需要人工重复执行本命令。
+
 `transport_home` 当前是全零关节角的 `placeholder`，仅供离线观察。点击滑块的 Reset 后，
 ReturnHome 应在连续满足容差 0.3 秒后返回 `SUCCEEDED`；这不代表已经完成返回路径规划、
 自碰撞检查或真机 Home 标定。

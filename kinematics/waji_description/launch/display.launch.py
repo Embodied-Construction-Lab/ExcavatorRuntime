@@ -18,6 +18,7 @@ def generate_launch_description():
     tip_frame = LaunchConfiguration("tip_frame")
     pose_topic = LaunchConfiguration("pose_topic")
 
+    # 启动三个节点
     return LaunchDescription(
         [
             DeclareLaunchArgument("root_frame", default_value="machine_root_ros"),
@@ -29,6 +30,9 @@ def generate_launch_description():
             # a right-handed ROS frame (+X forward, +Y left, +Z up), not a
             # Unity frame.  This explicit identity adapter makes the sole
             # system root machine_root_ros without editing measured URDF data.
+
+            # 节点1：连接系统根和URDF根(ros自带节点)
+            # machine_root_ros ──静态TF──> fk_root
             Node(
                 package="tf2_ros",
                 executable="static_transform_publisher",
@@ -41,6 +45,9 @@ def generate_launch_description():
                     "--child-frame-id", "fk_root",
                 ],
             ),
+            # 节点2：根据关节角计算整个挖机的 TF(ros自带节点)
+            # 输入: robot_description为urdf文件,此外还有/joint_states 中的四个关节角
+            # 根据关节角度计算bucket tip的pose,并发布到/bucket_tip_pose_machine_root_ros
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
@@ -48,6 +55,10 @@ def generate_launch_description():
                 output="screen",
                 parameters=[{"robot_description": robot_description}],
             ),
+            # 节点3：查询整条TF的最终结果
+            # machine_root_ros → bucket_tip
+            # ↓
+            # 发布 /bucket_tip_pose_machine_root_ros
             Node(
                 package="waji_description",
                 executable="bucket_tip_pose_publisher.py",

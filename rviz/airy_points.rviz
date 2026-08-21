@@ -10,7 +10,6 @@ Panels:
         - /Status1
         - /Grid1
         - /RobotModel1
-        - /RobotModel1/Status1
         - /Axes1
         - /MarkerArray1
         - /Planning Preview Path1
@@ -116,8 +115,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 2.434553623199463
-        Min Value: -16.347291946411133
+        Max Value: 2.3184475898742676
+        Min Value: -16.32853126525879
         Value: true
       Axis: Y
       Channel Name: intensity
@@ -147,25 +146,24 @@ Visualization Manager:
       Use rainbow: true
       Value: true
     - Class: rviz_default_plugins/Axes
-      Enabled: true
+      Enabled: false
       Length: 1
       Name: Axes
       Radius: 0.05000000074505806
       Reference Frame: machine_root_ros
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Mission Targets
       Namespaces:
-        mission_target_labels: true
-        mission_targets: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /mission/target_markers
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: false
       Name: Strict Bucket Tip Path
@@ -203,49 +201,21 @@ Visualization Manager:
         Value: /localmap/reachable_workspace_markers
       Value: false
     - Class: rviz_default_plugins/TF
-      Enabled: true
+      Enabled: false
       Filter (blacklist): ""
       Filter (whitelist): ""
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        arm_link:
-          Value: true
-        base_link:
-          Value: true
-        boom_link:
-          Value: true
-        bucket_link:
-          Value: true
-        bucket_tip:
-          Value: true
-        fk_root:
-          Value: true
-        machine_root_ros:
-          Value: true
-        swing_link:
-          Value: true
-        world:
-          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: false
       Tree:
-        machine_root_ros:
-          fk_root:
-            base_link:
-              swing_link:
-                boom_link:
-                  arm_link:
-                    bucket_link:
-                      bucket_tip:
-                        {}
-        world:
-          {}
+        {}
       Update Interval: 0
-      Value: true
+      Value: false
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path
@@ -312,7 +282,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 6.113242149353027
+      Distance: 4.860255718231201
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -327,10 +297,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.7047968506813049
+      Pitch: 0.5047968626022339
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 4.740478992462158
+      Yaw: 4.475483417510986
     Saved: ~
 Window Geometry:
   Displays:
