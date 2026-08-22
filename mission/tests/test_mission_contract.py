@@ -75,7 +75,6 @@ class MissionContractTest(unittest.TestCase):
         self.assertEqual(mission.limits.waypoint_tolerance_m, 0.25)
         self.assertEqual(mission.limits.waypoint_dwell_s, 0.0)
         self.assertEqual(mission.limits.tracking_timeout_s, 60.0)
-        self.assertEqual(mission.targets["dump"].position_m, (-0.2, -1.35, 0.1))
         self.assertGreaterEqual(
             min(target.radius_m for target in mission.targets.values()),
             mission.limits.waypoint_tolerance_m,

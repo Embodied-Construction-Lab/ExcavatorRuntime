@@ -69,18 +69,41 @@ class PlanFollowShadowClient(Node):
         wait_s: float,
         target_id: str | None = None,
     ) -> PlanFollowOutcome:
-        plan_handle = None
-        plan_result_future = None
-        follow_handle = None
-        follow_result_future = None
         if phase not in ("dig", "dump"):
             raise ValueError("phase must be dig or dump")
         if wait_s <= 0.0:
             raise ValueError("wait_s must be positive")
-        self._require_runtime_status(wait_s)
+        self.require_runtime_ready(wait_s)
+        plan_result = self.plan_phase(
+            mission=mission,
+            phase=phase,
+            wait_s=wait_s,
+            target_id=target_id,
+        )
+        follow_result = self.follow_trajectory(plan_result.trajectory, wait_s=wait_s)
+        return PlanFollowOutcome(plan_result=plan_result, follow_result=follow_result)
+
+    def require_runtime_ready(
+        self, wait_s: float, *, expected_input_source: str | None = None
+    ) -> None:
+        self._require_runtime_status(wait_s, expected_input_source=expected_input_source)
+
+    def plan_phase(
+        self,
+        *,
+        mission: ExcavationMission,
+        phase: str,
+        wait_s: float,
+        target_id: str | None = None,
+    ) -> Plan.Result:
+        if phase not in ("dig", "dump"):
+            raise ValueError("phase must be dig or dump")
+        if wait_s <= 0.0:
+            raise ValueError("wait_s must be positive")
+        plan_handle = None
+        plan_result_future = None
         if not self._plan.wait_for_server(timeout_sec=wait_s):
             raise RuntimeError("Plan Action Server is unavailable")
-
         try:
             plan_send = self._plan.send_goal_async(
                 _build_plan_goal(
@@ -123,20 +146,22 @@ class PlanFollowShadowClient(Node):
                 f"waypoints={len(trajectory.waypoints)} action_datagrams=0",
                 flush=True,
             )
+            return plan_result
+        finally:
+            if plan_handle is not None:
+                self._cancel_and_wait(
+                    plan_handle, plan_result_future, wait_s, "Plan"
+                )
 
-            if not self._follow.wait_for_server(timeout_sec=wait_s):
-                raise RuntimeError("Follow Action Server is unavailable")
-            self._require_runtime_status(
-                wait_s, expected_input_source=trajectory.input_source
-            )
-            _validate_trajectory(
-                self,
-                mission,
-                phase,
-                trajectory,
-                execution_eligible=self._EXECUTION_ELIGIBLE,
-                planning_scope=self._PLANNING_SCOPE,
-            )
+    def follow_trajectory(self, trajectory, *, wait_s: float) -> Follow.Result:
+        if wait_s <= 0.0:
+            raise ValueError("wait_s must be positive")
+        follow_handle = None
+        follow_result_future = None
+        if not self._follow.wait_for_server(timeout_sec=wait_s):
+            raise RuntimeError("Follow Action Server is unavailable")
+        self.require_runtime_ready(wait_s, expected_input_source=trajectory.input_source)
+        try:
             follow_goal = Follow.Goal()
             follow_goal.trajectory = copy.deepcopy(trajectory)
             follow_send = self._follow.send_goal_async(
@@ -174,17 +199,11 @@ class PlanFollowShadowClient(Node):
                 f"action_datagrams={follow_result.action_datagrams}",
                 flush=True,
             )
-            return PlanFollowOutcome(
-                plan_result=plan_result, follow_result=follow_result
-            )
+            return follow_result
         finally:
             if follow_handle is not None:
                 self._cancel_and_wait(
                     follow_handle, follow_result_future, wait_s, "Follow"
-                )
-            if plan_handle is not None:
-                self._cancel_and_wait(
-                    plan_handle, plan_result_future, wait_s, "Plan"
                 )
 
     def _wait(self, future, timeout_s: float, operation: str):

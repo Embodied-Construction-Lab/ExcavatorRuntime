@@ -9,8 +9,10 @@ import pytest
 
 AIRY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DEMO = AIRY_ROOT / "mission" / "config" / "excavation_demo.json"
+DEFAULT_MISSION = AIRY_ROOT / "mission" / "config" / "excavation_cycle.json"
 sys.path.insert(0, str(AIRY_ROOT))
 
+from mission.contract import load_mission
 from mission.demo import DemoProgramError, load_demo_program
 
 
@@ -78,11 +80,15 @@ def test_loads_ordered_immutable_multi_point_program(tmp_path):
 
 def test_active_demo_program_uses_current_right_handed_target_contract():
     program = load_demo_program(DEFAULT_DEMO)
+    mission = load_mission(DEFAULT_MISSION)
+    center_dig = next(point for point in program.dig_points if point.point_id == "dig_02")
 
     assert program.frame_id == "machine_root_ros"
     assert program.target_status in {"rviz_adjusted", "field_validated"}
     assert len(program.dig_points) >= 1
-    assert program.dump_target.position_m == pytest.approx((-0.2, -1.35, 0.1))
+    assert center_dig.target == mission.targets["dig"]
+    assert program.dump_target == mission.targets["dump"]
+    assert program.limits == mission.limits
     assert program.limits.waypoint_tolerance_m == pytest.approx(0.25)
 
 

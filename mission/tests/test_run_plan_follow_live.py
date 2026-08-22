@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from ament_index_python.packages import get_package_share_directory
 
+from mission.demo import load_demo_program
 from mission.runtime_ros import run_plan_follow_live
 
 
@@ -141,6 +142,11 @@ def test_live_cli_selects_one_configured_demo_dig_point(monkeypatch, tmp_path):
     calls = []
     profile = object()
     demo_path = Path(__file__).resolve().parents[1] / "config/excavation_demo.json"
+    expected_target = next(
+        point.target
+        for point in load_demo_program(demo_path).dig_points
+        if point.point_id == "dig_03"
+    )
 
     monkeypatch.setattr(
         run_plan_follow_live,
@@ -191,4 +197,4 @@ def test_live_cli_selects_one_configured_demo_dig_point(monkeypatch, tmp_path):
     selected = calls[0]
     assert selected["phase"] == "dig"
     assert selected["target_id"] == "field_demo_001:dig:dig_03"
-    assert selected["mission"].targets["dig"].position_m == (1.0, -0.2, 0.0)
+    assert selected["mission"].targets["dig"] == expected_target

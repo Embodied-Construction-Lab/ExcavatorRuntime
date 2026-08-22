@@ -77,6 +77,12 @@ install(
 )
 
 install(
+  PROGRAMS runtime_ros/run_prepared_plan_follow_live.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME run_prepared_plan_follow_live
+)
+
+install(
   PROGRAMS runtime_ros/send_return_home_goal.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME send_return_home_goal
@@ -133,6 +139,10 @@ if(BUILD_TESTING)
   ament_add_pytest_test(
     test_run_plan_follow_live
     tests/test_run_plan_follow_live.py
+  )
+  ament_add_pytest_test(
+    test_run_prepared_plan_follow_live
+    tests/test_run_prepared_plan_follow_live.py
   )
   ament_add_pytest_test(
     test_return_home_action_integration
