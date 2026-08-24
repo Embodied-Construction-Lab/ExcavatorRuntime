@@ -245,6 +245,42 @@ def test_live_plan_follow_uses_execution_eligible_trajectory_and_confirms_quiesc
         rclpy.shutdown(context=context)
 
 
+def test_live_client_can_prepare_then_follow_the_same_execution_trajectory():
+    context = rclpy.context.Context()
+    rclpy.init(context=context)
+    fixture = _ActionFixture(context=context, shadow_status=False)
+    fixture.enable_live_contract()
+    fixture.follow_action_datagrams = 7
+    executor = MultiThreadedExecutor(num_threads=3, context=context)
+    executor.add_node(fixture)
+    thread = threading.Thread(target=executor.spin, daemon=True)
+    thread.start()
+    client = PlanFollowLiveClient(context=context)
+    try:
+        plan_result = client.plan_phase(
+            mission=load_mission(MISSION_PATH), phase="dig", wait_s=3.0
+        )
+
+        assert plan_result.reason_code == "SUCCEEDED"
+        assert plan_result.trajectory.planning_scope == "execution_strict"
+        assert plan_result.trajectory.execution_eligible is True
+        assert fixture.plan_scopes == ["execution_strict"]
+        assert not fixture.followed
+
+        follow_result = client.follow_trajectory(plan_result.trajectory, wait_s=3.0)
+
+        assert follow_result.quiescence_confirmed
+        assert follow_result.action_datagrams == 7
+        assert len(fixture.followed) == 1
+        assert fixture.followed[0] == plan_result.trajectory
+    finally:
+        client.destroy_node()
+        executor.shutdown(timeout_sec=1.0)
+        thread.join(timeout=1.0)
+        fixture.destroy_node()
+        rclpy.shutdown(context=context)
+
+
 def test_live_plan_follow_waits_for_runtime_to_become_ready_within_deadline():
     context = rclpy.context.Context()
     rclpy.init(context=context)
