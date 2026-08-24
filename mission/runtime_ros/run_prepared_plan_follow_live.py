@@ -130,6 +130,14 @@ def run(argv: list[str] | None = None) -> int:
     parser.add_argument("--dig-point")
     parser.add_argument("--start-gate", type=Path, required=True)
     parser.add_argument(
+        "--plan-gate",
+        type=Path,
+        help=(
+            "Optional one-shot gate that lets the process initialize ROS before "
+            "freezing live inputs and planning."
+        ),
+    )
+    parser.add_argument(
         "--first-waypoint-distance-m",
         type=float,
         default=0.08,
@@ -139,11 +147,17 @@ def run(argv: list[str] | None = None) -> int:
     node = None
     try:
         profile = load_planning_profile(args.planning_profile)
-        print("waiting for fresh live planning inputs", flush=True)
-        wait_for_live_planning_inputs(profile, timeout_s=args.wait_s)
         mission, target_id = _load_selected_mission(args)
         rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
         node = PlanFollowLiveClient()
+        if args.plan_gate is not None:
+            print(
+                f"prepared planner warm: gate={Path(args.plan_gate)}",
+                flush=True,
+            )
+            wait_for_start_gate(args.plan_gate)
+        print("waiting for fresh live planning inputs", flush=True)
+        wait_for_live_planning_inputs(profile, timeout_s=args.wait_s)
         plan_result = node.plan_phase(
             mission=mission,
             phase=args.phase,
@@ -151,6 +165,9 @@ def run(argv: list[str] | None = None) -> int:
             target_id=target_id,
         )
         trajectory = plan_result.trajectory
+        node.require_runtime_ready(
+            args.wait_s, expected_input_source=trajectory.input_source
+        )
         print(
             "prepared follow ready: "
             f"trajectory_id={trajectory.trajectory_id} "
@@ -159,9 +176,6 @@ def run(argv: list[str] | None = None) -> int:
             flush=True,
         )
         wait_for_start_gate(args.start_gate)
-        node.require_runtime_ready(
-            args.wait_s, expected_input_source=trajectory.input_source
-        )
         runtime_now_s = node.get_clock().now().nanoseconds * 1e-9
         latest_bucket_tip = load_latest_live_bucket_tip(profile, now_s=runtime_now_s)
         validate_prepared_follow_activation(

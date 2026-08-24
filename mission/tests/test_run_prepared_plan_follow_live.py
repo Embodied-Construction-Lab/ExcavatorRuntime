@@ -44,9 +44,12 @@ def _snapshot(*, created_at_s: float = 100.0, valid_until_s: float = 110.0):
     return snapshot
 
 
-def test_prepared_cli_prepares_then_waits_for_gate_before_follow(monkeypatch, tmp_path, capsys):
+def test_prepared_cli_warms_before_plan_gate_then_prepares_before_follow_gate(
+    monkeypatch, tmp_path, capsys
+):
     events = []
     snapshot = _snapshot()
+    plan_gate = tmp_path / "prepared.plan"
     gate = tmp_path / "prepared.start"
 
     class FakeClient:
@@ -91,7 +94,11 @@ def test_prepared_cli_prepares_then_waits_for_gate_before_follow(monkeypatch, tm
     monkeypatch.setattr(run_prepared_plan_follow_live.rclpy, "init", lambda **_kwargs: events.append("rclpy_init"))
     monkeypatch.setattr(run_prepared_plan_follow_live.rclpy, "ok", lambda: True)
     monkeypatch.setattr(run_prepared_plan_follow_live.rclpy, "shutdown", lambda: events.append("rclpy_shutdown"))
-    monkeypatch.setattr(run_prepared_plan_follow_live, "wait_for_start_gate", lambda actual: events.append(("wait_gate", actual)))
+    monkeypatch.setattr(
+        run_prepared_plan_follow_live,
+        "wait_for_start_gate",
+        lambda actual: events.append(("wait_gate", actual)),
+    )
     monkeypatch.setattr(
         run_prepared_plan_follow_live,
         "validate_prepared_follow_activation",
@@ -113,6 +120,8 @@ def test_prepared_cli_prepares_then_waits_for_gate_before_follow(monkeypatch, tm
             str(tmp_path / "planning.json"),
             "--start-gate",
             str(gate),
+            "--plan-gate",
+            str(plan_gate),
             "--first-waypoint-distance-m",
             "0.08",
             "--wait-s",
@@ -121,16 +130,18 @@ def test_prepared_cli_prepares_then_waits_for_gate_before_follow(monkeypatch, tm
     )
 
     assert result == 0
-    assert events[:4] == [
+    assert events[:7] == [
         "rclpy_init",
         "client_created",
+        ("wait_gate", plan_gate),
         ("plan_phase", "dig", None),
+        ("runtime_ready", 3.0, "live"),
         ("wait_gate", gate),
+        ("validate_activation", 0.08),
     ]
-    assert ("runtime_ready", 3.0, "live") in events
-    assert ("validate_activation", 0.08) in events
     assert ("follow_trajectory", "prepared-trajectory-001", 3.0) in events
     output = capsys.readouterr().out
+    assert "prepared planner warm:" in output
     assert "prepared follow ready:" in output
     assert "trajectory_id=prepared-trajectory-001" in output
 
