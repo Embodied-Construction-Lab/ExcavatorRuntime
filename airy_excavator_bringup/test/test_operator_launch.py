@@ -94,3 +94,12 @@ def test_live_input_adapter_exit_shuts_down_the_whole_operator_stack():
         "_required_process(\n"
         "                    gateway_process, \"required Orin Edge Follow Gateway exited\""
     ) in text
+
+
+def test_live_shadow_can_publish_orin_authoritative_v3a_trajectory():
+    text = launch_text()
+
+    assert '"v3a_trajectory_path"' in text
+    assert "publish_trajectory_markers.py" in text
+    assert '"--trajectory"' in text
+    assert "required V3-A trajectory marker publisher exited" in text

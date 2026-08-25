@@ -165,7 +165,7 @@ Visualization Manager:
         Value: /mission/target_markers
       Value: false
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
+      Enabled: true
       Name: Strict Bucket Tip Path
       Namespaces:
         {}
@@ -175,7 +175,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /localmap/planned_bucket_tip_markers
-      Value: false
+      Value: true
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: MarkerArray
