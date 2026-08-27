@@ -1,0 +1,45 @@
+{
+  "id": "T_machine_root_ros_rslidar.operator_adjusted_v3",
+  "from_frame": "rslidar",
+  "to_frame": "machine_root_ros",
+  "translation_m": [
+    0.615,
+    -1.82,
+    0.094
+  ],
+  "axis_mapping_matrix": [
+    [
+      1.0,
+      0.0,
+      0.0
+    ],
+    [
+      0.0,
+      -1.0,
+      0.0
+    ],
+    [
+      0.0,
+      0.0,
+      -1.0
+    ]
+  ],
+  "status": "operator_adjusted_requires_runtime_verification",
+  "frame_convention": {
+    "machine_root_ros": {
+      "+X": "挖掘机前方，ROS right-handed",
+      "+Y": "挖掘机左侧，ROS right-handed",
+      "+Z": "挖掘机上方，ROS right-handed"
+    },
+    "mapping": {
+      "rslidar +X": "machine_root_ros +X",
+      "rslidar +Y": "machine_root_ros -Y",
+      "rslidar +Z": "machine_root_ros -Z"
+    },
+    "derivation": "轴映射沿用 T_machine_root_rslidar.measured.v1 的 Unity->ROS 显式转换；translation_m 是雷达物理重定位后的操作员调整值，不冒充精密标定。"
+  },
+  "measurement_notes": [
+    "2026-08-27 记录雷达物理位置调整后的 translation_m=[0.615,-1.82,0.094]。",
+    "尚未绑定新的精密标定报告；启用前需在 RViz/LocalMap 中核对地面、料堆与 bucket tip 对齐。"
+  ]
+}

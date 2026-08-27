@@ -18,7 +18,7 @@ commissioning acknowledgement；不能把它当作已晋升的 field 配置。
 ## 页面职责
 
 - 选择 RL/人工/直接定位或仅遥操作；
-- 读取 Orin 权威 Campaign 的下一条 slot；
+- 一次启动并记录一条 Episode，人工填写本条标签；
 - 管理 Collector、双 RGB 预览和 STM32 遥测；
 - V2 模式管理 AiryLidar Operator/RViz；
 - 启动、取消和显示 Orin 本地 V3-A 固定点闭环；
@@ -26,10 +26,10 @@ commissioning acknowledgement；不能把它当作已晋升的 field 配置。
 
 UI 是编排器，不直接打开相机或串口。它不会用页面按钮绕过 motion authorization、deadman 或 STM32 安全边界。
 
-V3-A 当前组合不启动 PC RViz。不能直接复用带 Behavior 控制权的
-`live_commissioning` Operator，否则可能与 Orin 本地固定闭环争抢运动权。
-如果 V3-A 需要 RViz 录像，应单独接入只读状态/TF/感知显示模式，
-不得启动第二个 STM32 Owner 或外部 Behavior Gateway。
+V3-A 自动 Mission 会使用 PC `live_shadow` RViz，只读显示状态、雷达和 Orin 实际跟踪
+的三点轨迹。它不生成轨迹、不发送运动命令，也不会启动第二个 STM32 Owner 或外部
+Behavior Gateway。不能改用带 Behavior 控制权的 `live_commissioning` Operator，否则
+可能与 Orin 本地固定闭环争抢运动权。
 
 ## V3-A 页面状态
 
@@ -45,9 +45,12 @@ EXECUTE_DUMP → 3·RL 倾倒（固定张斗动作）
 `V3-A local status` 日志为准。安全取消的通过标准是 `CANCELLED`、
 `resident terminal zero acknowledged` 且无 traceback。
 
-## 正式采集门禁
+## 单条采集边界
 
-正式 `demonstration` 必须精确匹配 Campaign 的 `task_variant`、`soil_reset_block_id`、`dig_point_id`。UI 在预运动前和 Episode 创建前都会重新检查，防止多人操作或重录时 slot 漂移。
+- 一次点击只创建一条 `demonstration` Episode，不自动推进固定 200 条计划。
+- task/soil/dig/zone/repeat/note 是本条数据标签；UI 不再用 Campaign slot 阻止启动。
+- 实际使用的 AiryLidar 目标配置仍要记录 commit/path/SHA，采集期间目标漂移会在录制前拒绝。
+- 成功、失败和重录由操作者逐条确认；训练候选仍以终态元数据和 raw validator 为准。
 
 ## 使用原则
 

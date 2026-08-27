@@ -4,7 +4,7 @@
   "expected_frame": "machine_root_ros",
   "inputs": {
     "rslidar_config": "runtime/config_airy_current.yaml",
-    "extrinsics": "localmap/config/extrinsics_rslidar_to_machine_root_ros.derived.v2.json",
+    "extrinsics": "localmap/config/extrinsics_rslidar_to_machine_root_ros.derived.v3.json",
     "targets": "localmap/config/targets.machine_root_ros.derived.v1.json",
     "bucket_tip_bridge": "localmap/config/bucket_tip_tf_bridge.machine_root_ros.identity.v1.json"
   },
