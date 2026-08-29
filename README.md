@@ -312,39 +312,20 @@ motion_gate_reason=ready
 `ExecuteDig/ExecuteDump`。固定动作与 Follow 互斥，取消、失败、超时和完成均由 Orin
 先发送终态零命令。`ReturnHome` 要等对应 Orin 行为接口迁移后再启用。
 
-### 多挖掘点现场演示
+### V3-B 目录驱动的多点现场显示与闭环
 
-`mission/config/excavation_demo.json` 是演示程序的唯一入口。`dig_points` 按文件顺序执行，
-每个点都完成以下完整循环后才进入下一个点：
+`mission/config/excavation_dig_point_catalog.v1.json` 是固定挖掘点的唯一入口。点位按
+`dig_points` 对象顺序排列，并由 `dig_groups` 中的点集选择循环范围：
 
 ```text
 Follow DIG → ExecuteDig → Follow DUMP → ExecuteDump
 ```
 
-每个 `point_id` 必须唯一；全部坐标均为 `machine_root_ros` 右手系米制坐标。默认文件已经配置
-`dig_01`、`dig_02`、`dig_03` 三个现场演示点。调整或增加点位时，在 `dig_points` 数组中修改或
-复制对象，并更新 `point_id` 与 `position_m`。公共倾倒点只需修改 `dump_target`。live Operator
-会在 `Mission Targets` 中显示全部 dig 点和公共 dump 点；橙色标签包含各自的 `point_id`。
-
-演示程序由实时规划器在 PC Operator 启动时一次性加载。修改坐标后不需要同步到 Orin，也不需要
-重新编译，但必须重启 PC 的 `operator.launch.py`，使规划器与客户端读取同一文件 SHA。然后在
-第二个 PC 终端运行：
-
-```bash
-cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
-source /opt/ros/jazzy/setup.zsh
-source ros2_ws/install/setup.zsh
-
-ros2 run airy_mission_runtime run_excavation_demo \
-  --program /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar/mission/config/excavation_demo.json \
-  --repeat 1
-```
-
-`--repeat 2` 表示把整个点位列表重复两轮。脚本每次只提交一个 `/mission/run_cycle` Goal，
-等待 `FollowDig → Dig → FollowDump → Dump` 返回成功且确认静止后再提交下一个。PC 只执行
-`PLAN_DIG` 与 `PLAN_DUMP` 两个规划边界；Orin 在本地分别连续推进
-`FollowDig → ExecuteDig` 和 `FollowDump → ExecuteDump`，不再由 PC 为四个动作逐一发 RPC。任一步拒绝、
-失败、超时或取消都会停止演示，不会跳过失败点继续运动。
+每个 point key 必须唯一；全部坐标均为 `machine_root_ros` 右手系米制坐标。V3-B WebUI
+从目录读取当前点数、点集和起始点并提交给 Orin 常驻闭环；
+运行期间点集冻结。PC Operator 只读发布 `/mission/target_markers`，近端为橙色、远端为蓝色，
+并继续用 `/localmap/planned_bucket_tip_markers` 显示 Orin 当前实际三点轨迹。修改目录后需要
+同步 PC/Orin 对应部署并重启 UI/RViz，不保留旧三点运行回退。
 
 Panel → Tests 只保留离线 JointState 滑块；它在 live profile 中被禁用，不发送真机动作。
 ONNX 的四轴 `[-1,1]` 输出、38 维 Observation、waypoint 推进和 fixed action 都由 Orin

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mission.contract import ExcavationMission
-from mission.demo import ExcavationDemoProgram
+from mission.dig_point_catalog import DigPointCatalog
 
 
 MARKER_STYLE_SCHEMA = "mission_marker_style.v1"
@@ -84,29 +84,37 @@ def build_mission_marker_specs(
     )
 
 
-def build_demo_marker_specs(
-    program: ExcavationDemoProgram,
+def build_catalog_marker_specs(
+    catalog: DigPointCatalog,
+    mission: ExcavationMission,
     style: MissionMarkerStyle,
 ) -> tuple[MissionMarkerSpec, ...]:
-    """显示全部有序挖掘点和公共倾倒点。"""
-    status = program.target_status.upper()
+    """Display the authoritative fixed dig catalog and the common dump target."""
+    near_ids = frozenset(catalog.groups.get("near", ()))
+    far_ids = frozenset(catalog.groups.get("far", ()))
     dig_specs = tuple(
         MissionMarkerSpec(
-            phase=f"dig:{point.point_id}",
-            frame_id=program.frame_id,
-            position_m=point.target.position_m,
+            phase=f"dig:{point_id}",
+            frame_id=catalog.frame_id,
+            position_m=position,
             diameter_m=style.target_diameter_m,
-            color_rgba=(1.0, 0.45, 0.0, 0.85),
-            label=f"DIG {point.point_id} [{status}] {program.demo_id}",
+            color_rgba=(
+                (1.0, 0.45, 0.0, 0.9)
+                if point_id in near_ids
+                else (0.0, 0.65, 1.0, 0.9)
+                if point_id in far_ids
+                else (0.7, 0.7, 0.7, 0.9)
+            ),
+            label=f"DIG {point_id}",
         )
-        for point in program.dig_points
+        for point_id, position in catalog.points.items()
     )
     dump_spec = MissionMarkerSpec(
         phase="dump",
-        frame_id=program.frame_id,
-        position_m=program.dump_target.position_m,
+        frame_id=mission.frame_id,
+        position_m=mission.targets["dump"].position_m,
         diameter_m=style.target_diameter_m,
         color_rgba=(0.65, 0.15, 1.0, 0.85),
-        label=f"DUMP [{status}] {program.demo_id}",
+        label=f"DUMP [{mission.target_status.upper()}] {mission.mission_id}",
     )
     return (*dig_specs, dump_spec)

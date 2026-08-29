@@ -10,6 +10,7 @@ install(
   FILES
     __init__.py
     contract.py
+    dig_point_catalog.py
     demo.py
     demo_runner.py
     follow.py
@@ -118,6 +119,8 @@ install(
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_dig_point_catalog tests/test_dig_point_catalog.py)
+  ament_add_pytest_test(test_markers tests/test_markers.py)
   ament_add_pytest_test(test_follow_session tests/test_follow_session.py)
   ament_add_pytest_test(
     test_follow_action_integration

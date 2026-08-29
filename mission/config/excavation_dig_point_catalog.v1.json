@@ -1,0 +1,21 @@
+{
+  "schema_version": "excavation_dig_point_catalog.v1",
+  "frame_id": "machine_root_ros",
+  "dig_points": {
+    "dig_near_01": [1.1, 0.55, 0.0],
+    "dig_near_02": [1.1, 0.25, 0.0],
+    "dig_near_03": [1.1, -0.05, 0.0],
+    "dig_near_04": [1.1, -0.35, 0.0],
+    "dig_near_05": [1.1, -0.60, 0.2]
+  },
+  "default_dig_group": "all",
+  "dig_groups": {
+    "all": [
+      "dig_near_01",
+      "dig_near_02",
+      "dig_near_03",
+      "dig_near_04",
+      "dig_near_05"
+    ]
+  }
+}

@@ -122,6 +122,7 @@ _LIVE_ADAPTER_PATHS = (
     Path("localmap/localmap_core/runtime_ros/live_plan_action_server.py"),
     Path("localmap/config/planning.json"),
     Path("mission/config/excavation_cycle.json"),
+    Path("mission/config/excavation_dig_point_catalog.v1.json"),
     Path("mission/config/excavation_demo.json"),
     Path("kinematics/waji_description/urdf/waji.urdf"),
 )
@@ -403,18 +404,20 @@ def _launch_profile(context):
                         else Path(get_package_share_directory("airy_mission_runtime"))
                         / "config/excavation_cycle.json"
                     ),
-                    *(
-                        [
-                            "--demo",
-                            str(airy_root / "mission/config/excavation_demo.json"),
-                        ]
+                    "--dig-point-catalog",
+                    str(
+                        airy_root
+                        / "mission/config/excavation_dig_point_catalog.v1.json"
                         if (
                             profile.start_live_state_bridge
                             or profile.start_live_perception
                             or profile.start_live_planner
                             or profile.start_orin_edge_gateway
                         )
-                        else []
+                        else Path(
+                            get_package_share_directory("airy_mission_runtime")
+                        )
+                        / "config/excavation_dig_point_catalog.v1.json"
                     ),
                 ],
             ),

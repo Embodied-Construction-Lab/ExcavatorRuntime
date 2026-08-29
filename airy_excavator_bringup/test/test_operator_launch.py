@@ -20,6 +20,32 @@ def test_operator_launch_owns_one_rviz_and_reuses_common_shadow_stack():
     assert '"enable_embedded_joint_tests"' in text
 
 
+def test_live_mission_markers_use_only_the_authoritative_point_catalog():
+    text = launch_text()
+    marker_node = text[
+        text.index('executable="mission_snapshot_publisher"') :
+        text.index('package="rviz2"')
+    ]
+
+    assert '"--dig-point-catalog"' in marker_node
+    assert "excavation_dig_point_catalog.v1.json" in marker_node
+    assert '"--demo"' not in marker_node
+
+
+def test_rviz_enables_authoritative_mission_targets_by_default():
+    rviz = (PACKAGE_ROOT.parent / "rviz/airy_points.rviz").read_text(
+        encoding="utf-8"
+    )
+    display = rviz[
+        rviz.index("Name: Mission Targets") :
+        rviz.index("Name: Strict Bucket Tip Path")
+    ]
+
+    assert "Enabled: true" in display
+    assert "Value: true" in display
+    assert "Value: /mission/target_markers" in display
+
+
 def test_operator_launch_uses_only_the_orin_edge_command_sink():
     text = launch_text().lower()
 

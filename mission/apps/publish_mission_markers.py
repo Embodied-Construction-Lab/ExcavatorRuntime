@@ -21,11 +21,10 @@ except ModuleNotFoundError as exc:
     ) from exc
 
 from mission.contract import MissionContractError, load_mission
-from mission.demo import load_demo_program
+from mission.dig_point_catalog import DigPointCatalogError, load_dig_point_catalog
 from mission.markers import (
     MissionMarkerStyleError,
-    build_demo_marker_specs,
-    build_mission_marker_specs,
+    build_catalog_marker_specs,
     load_mission_marker_style,
 )
 
@@ -34,9 +33,9 @@ DEFAULT_MISSION = (
     Path(get_package_share_directory("airy_mission_runtime"))
     / "config/excavation_cycle.json"
 )
-DEFAULT_DEMO = (
+DEFAULT_DIG_POINT_CATALOG = (
     Path(get_package_share_directory("airy_mission_runtime"))
-    / "config/excavation_demo.json"
+    / "config/excavation_dig_point_catalog.v1.json"
 )
 DEFAULT_MARKER_STYLE = (
     Path(get_package_share_directory("airy_mission_runtime"))
@@ -47,7 +46,11 @@ DEFAULT_MARKER_STYLE = (
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="发布文件式Mission的dig/dump RViz标记。")
     parser.add_argument("--mission", type=Path, default=DEFAULT_MISSION)
-    parser.add_argument("--demo", type=Path)
+    parser.add_argument(
+        "--dig-point-catalog",
+        type=Path,
+        default=DEFAULT_DIG_POINT_CATALOG,
+    )
     parser.add_argument("--marker-style", type=Path, default=DEFAULT_MARKER_STYLE)
     parser.add_argument("--topic", default="/mission/target_markers")
     parser.add_argument("--rate-hz", type=float, default=2.0)
@@ -66,14 +69,14 @@ class MissionMarkerPublisher(Node):
         mission_path: Path,
         topic: str,
         rate_hz: float,
-        demo_path: Path | None = None,
+        dig_point_catalog_path: Path = DEFAULT_DIG_POINT_CATALOG,
         marker_style_path: Path = DEFAULT_MARKER_STYLE,
     ) -> None:
         super().__init__("excavation_mission_marker_publisher")
         self.mission_path = mission_path
-        self.demo_path = demo_path
+        self.dig_point_catalog_path = dig_point_catalog_path
         self.marker_style_path = marker_style_path
-        self.last_mtime_ns: tuple[int, int | None, int | None] | None = None
+        self.last_mtime_ns: tuple[int, int, int | None] | None = None
         self.mission = None
         self.specs = ()
         marker_qos = QoSProfile(
@@ -89,14 +92,14 @@ class MissionMarkerPublisher(Node):
             for phase in ("dig", "dump")
         }
         self.timer = self.create_timer(1.0 / max(rate_hz, 0.1), self.publish_markers)
-        source = f"{mission_path}, demo={demo_path}" if demo_path else str(mission_path)
+        source = f"{mission_path}, dig_catalog={dig_point_catalog_path}"
         self.get_logger().info(f"mission markers: {source} -> {topic}")
 
     def _reload(self) -> bool:
         try:
             mtime_ns = (
                 self.mission_path.stat().st_mtime_ns,
-                self.demo_path.stat().st_mtime_ns if self.demo_path else None,
+                self.dig_point_catalog_path.stat().st_mtime_ns,
                 (
                     self.marker_style_path.stat().st_mtime_ns
                     if self.marker_style_path.exists()
@@ -106,8 +109,8 @@ class MissionMarkerPublisher(Node):
             if self.mission is not None and mtime_ns == self.last_mtime_ns:
                 return True
             mission = load_mission(self.mission_path)
-            demo = load_demo_program(self.demo_path) if self.demo_path else None
-        except (OSError, MissionContractError) as exc:
+            catalog = load_dig_point_catalog(self.dig_point_catalog_path)
+        except (OSError, MissionContractError, DigPointCatalogError) as exc:
             self.specs = ()
             self.mission = None
             self.last_mtime_ns = None
@@ -118,11 +121,7 @@ class MissionMarkerPublisher(Node):
         self.last_mtime_ns = mtime_ns
         try:
             style = load_mission_marker_style(self.marker_style_path)
-            self.specs = (
-                build_demo_marker_specs(demo, style)
-                if demo is not None
-                else build_mission_marker_specs(mission, style)
-            )
+            self.specs = build_catalog_marker_specs(catalog, mission, style)
         except (OSError, MissionMarkerStyleError) as exc:
             self.specs = ()
             self.get_logger().error(
@@ -207,7 +206,7 @@ def main() -> int:
         args.mission,
         args.topic,
         args.rate_hz,
-        demo_path=args.demo,
+        dig_point_catalog_path=args.dig_point_catalog,
         marker_style_path=args.marker_style,
     )
     try:

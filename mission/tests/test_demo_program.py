@@ -81,12 +81,18 @@ def test_loads_ordered_immutable_multi_point_program(tmp_path):
 def test_active_demo_program_uses_current_right_handed_target_contract():
     program = load_demo_program(DEFAULT_DEMO)
     mission = load_mission(DEFAULT_MISSION)
-    center_dig = next(point for point in program.dig_points if point.point_id == "dig_02")
-
     assert program.frame_id == "machine_root_ros"
     assert program.target_status in {"rviz_adjusted", "field_validated"}
-    assert len(program.dig_points) >= 1
-    assert center_dig.target == mission.targets["dig"]
+    catalog = json.loads(
+        (
+            AIRY_ROOT
+            / "mission/config/excavation_dig_point_catalog.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert {
+        point.point_id: list(point.target.position_m)
+        for point in program.dig_points
+    } == catalog["dig_points"]
     assert program.dump_target == mission.targets["dump"]
     assert program.limits == mission.limits
     assert program.limits.waypoint_tolerance_m == pytest.approx(0.25)
