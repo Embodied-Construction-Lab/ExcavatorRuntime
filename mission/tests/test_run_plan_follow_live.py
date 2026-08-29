@@ -145,7 +145,7 @@ def test_live_cli_selects_one_configured_demo_dig_point(monkeypatch, tmp_path):
     expected_target = next(
         point.target
         for point in load_demo_program(demo_path).dig_points
-        if point.point_id == "dig_03"
+        if point.point_id == "dig_near_05"
     )
 
     monkeypatch.setattr(
@@ -184,7 +184,7 @@ def test_live_cli_selects_one_configured_demo_dig_point(monkeypatch, tmp_path):
             "--demo",
             str(demo_path),
             "--dig-point",
-            "dig_03",
+            "dig_near_05",
             "--planning-profile",
             str(tmp_path / "planning.json"),
             "--wait-s",
@@ -196,5 +196,5 @@ def test_live_cli_selects_one_configured_demo_dig_point(monkeypatch, tmp_path):
     assert len(calls) == 1
     selected = calls[0]
     assert selected["phase"] == "dig"
-    assert selected["target_id"] == "field_demo_001:dig:dig_03"
+    assert selected["target_id"] == "field_demo_001:dig:dig_near_05"
     assert selected["mission"].targets["dig"] == expected_target

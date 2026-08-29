@@ -118,9 +118,11 @@ _LIVE_ADAPTER_PATHS = (
     Path("runtime_bridge/apps/pc_runtime_bridge.py"),
     Path("runtime_bridge/apps/orin_edge_follow_gateway.py"),
     Path("localmap/apps/perception/run_perception_stack.sh"),
+    Path("localmap/apps/visualization/publish_trajectory_markers.py"),
     Path("localmap/localmap_core/runtime_ros/live_plan_action_server.py"),
     Path("localmap/config/planning.json"),
     Path("mission/config/excavation_cycle.json"),
+    Path("mission/config/excavation_dig_point_catalog.v1.json"),
     Path("mission/config/excavation_demo.json"),
     Path("kinematics/waji_description/urdf/waji.urdf"),
 )
@@ -173,6 +175,7 @@ def _live_adapter_processes(
     profile: OperatorProfile,
     orin_host,
     orin_port,
+    v3a_trajectory_path: str,
 ):
     state_bridge = airy_root / "runtime_bridge" / "apps" / "pc_runtime_bridge.py"
     perception = airy_root / "localmap" / "apps" / "perception" / "run_perception_stack.sh"
@@ -257,6 +260,29 @@ def _live_adapter_processes(
                 ),
             ]
         )
+    if v3a_trajectory_path:
+        trajectory_process = ExecuteProcess(
+            cmd=[
+                "/usr/bin/python3",
+                str(
+                    airy_root
+                    / "localmap/apps/visualization/publish_trajectory_markers.py"
+                ),
+                "--trajectory",
+                v3a_trajectory_path,
+            ],
+            cwd=str(airy_root),
+            output="screen",
+        )
+        entities.extend(
+            [
+                trajectory_process,
+                _required_process(
+                    trajectory_process,
+                    "required V3-A trajectory marker publisher exited",
+                ),
+            ]
+        )
     entities.append(
         LogInfo(
             msg=(
@@ -275,6 +301,9 @@ def _launch_profile(context):
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
     authorization = LaunchConfiguration("motion_authorization").perform(context)
+    v3a_trajectory_path = LaunchConfiguration("v3a_trajectory_path").perform(
+        context
+    )
     motion_profile = profile.start_orin_edge_gateway
     if motion_profile and authorization != "ALLOW_LIVE_MACHINE_MOTION":
         raise RuntimeError(
@@ -282,6 +311,12 @@ def _launch_profile(context):
         )
     if not motion_profile and authorization != "LOCKED":
         raise RuntimeError("motion_authorization is only valid for a live motion profile")
+    if v3a_trajectory_path:
+        trajectory_path = Path(v3a_trajectory_path)
+        if profile.name != "live_shadow":
+            raise RuntimeError("v3a_trajectory_path requires profile:=live_shadow")
+        if not trajectory_path.is_absolute() or ".." in trajectory_path.parts:
+            raise RuntimeError("v3a_trajectory_path must be an absolute normalized path")
 
     bringup_share = Path(get_package_share_directory("airy_excavator_bringup"))
     rviz_config = bringup_share / "rviz" / "airy_points.rviz"
@@ -316,6 +351,7 @@ def _launch_profile(context):
                 profile,
                 LaunchConfiguration("orin_host"),
                 LaunchConfiguration("orin_port"),
+                v3a_trajectory_path,
             )
         )
 
@@ -368,18 +404,20 @@ def _launch_profile(context):
                         else Path(get_package_share_directory("airy_mission_runtime"))
                         / "config/excavation_cycle.json"
                     ),
-                    *(
-                        [
-                            "--demo",
-                            str(airy_root / "mission/config/excavation_demo.json"),
-                        ]
+                    "--dig-point-catalog",
+                    str(
+                        airy_root
+                        / "mission/config/excavation_dig_point_catalog.v1.json"
                         if (
                             profile.start_live_state_bridge
                             or profile.start_live_perception
                             or profile.start_live_planner
                             or profile.start_orin_edge_gateway
                         )
-                        else []
+                        else Path(
+                            get_package_share_directory("airy_mission_runtime")
+                        )
+                        / "config/excavation_dig_point_catalog.v1.json"
                     ),
                 ],
             ),
@@ -431,6 +469,13 @@ def generate_launch_description():
                 "orin_port",
                 default_value="18083",
                 description="Orin Edge behavior RPC TCP port.",
+            ),
+            DeclareLaunchArgument(
+                "v3a_trajectory_path",
+                default_value="",
+                description=(
+                    "Optional PC-local V3-A trajectory JSON for read-only RViz markers."
+                ),
             ),
             OpaqueFunction(function=_launch_profile),
         ]

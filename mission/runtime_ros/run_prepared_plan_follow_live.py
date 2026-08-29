@@ -46,7 +46,7 @@ def validate_prepared_follow_activation(
     runtime_now_s: float,
     latest_bucket_tip: dict,
     allowed_first_waypoint_distance_m: float,
-) -> None:
+) -> float:
     if (
         isinstance(allowed_first_waypoint_distance_m, bool)
         or not isinstance(allowed_first_waypoint_distance_m, (int, float))
@@ -90,14 +90,11 @@ def validate_prepared_follow_activation(
             "prepared trajectory first waypoint is too far from the fresh live bucket tip: "
             f"distance_m={first_distance_m:.4f}"
         )
+    return first_distance_m
 
 
 def wait_for_start_gate(path: Path, *, poll_interval_s: float = 0.05) -> None:
-    gate = Path(path)
-    if not gate.is_absolute():
-        raise ValueError("start gate must be an absolute path")
-    if gate.parent == gate or "/" in gate.name or not _SAFE_GATE_NAME.fullmatch(gate.name):
-        raise ValueError("start gate must be a safe absolute single file path")
+    gate = _validated_gate_path(path)
     if not math.isfinite(poll_interval_s) or poll_interval_s <= 0.0:
         raise ValueError("poll_interval_s must be positive")
     while True:
@@ -107,6 +104,44 @@ def wait_for_start_gate(path: Path, *, poll_interval_s: float = 0.05) -> None:
             time.sleep(poll_interval_s)
         else:
             return
+
+
+def wait_for_prepared_gate(
+    *,
+    start_gate: Path,
+    refresh_gate: Path,
+    poll_interval_s: float = 0.05,
+) -> str:
+    """Wait for activation or one request to refresh frozen Plan inputs.
+
+    An explicit refresh wins if both one-shot files are present.  The caller
+    requests refresh before activation, so consuming it first guarantees that
+    the authorized Follow cannot accidentally use the older frozen start.
+    """
+
+    start = _validated_gate_path(start_gate)
+    refresh = _validated_gate_path(refresh_gate)
+    if start == refresh:
+        raise ValueError("start and refresh gates must be different paths")
+    if not math.isfinite(poll_interval_s) or poll_interval_s <= 0.0:
+        raise ValueError("poll_interval_s must be positive")
+    while True:
+        for decision, gate in (("refresh", refresh), ("start", start)):
+            try:
+                gate.unlink()
+            except FileNotFoundError:
+                continue
+            return decision
+        time.sleep(poll_interval_s)
+
+
+def _validated_gate_path(path: Path) -> Path:
+    gate = Path(path)
+    if not gate.is_absolute():
+        raise ValueError("start gate must be an absolute path")
+    if gate.parent == gate or "/" in gate.name or not _SAFE_GATE_NAME.fullmatch(gate.name):
+        raise ValueError("start gate must be a safe absolute single file path")
+    return gate
 
 
 def _load_selected_mission(args) -> tuple[ExcavationMission, str | None]:
@@ -138,6 +173,14 @@ def run(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--refresh-gate",
+        type=Path,
+        help=(
+            "Optional one-shot gate that refreshes the frozen live Plan once "
+            "near the end of the preceding behavior."
+        ),
+    )
+    parser.add_argument(
         "--first-waypoint-distance-m",
         type=float,
         default=0.08,
@@ -156,17 +199,13 @@ def run(argv: list[str] | None = None) -> int:
                 flush=True,
             )
             wait_for_start_gate(args.plan_gate)
-        print("waiting for fresh live planning inputs", flush=True)
-        wait_for_live_planning_inputs(profile, timeout_s=args.wait_s)
-        plan_result = node.plan_phase(
+        trajectory = _prepare_trajectory(
+            node=node,
+            profile=profile,
             mission=mission,
             phase=args.phase,
             wait_s=args.wait_s,
             target_id=target_id,
-        )
-        trajectory = plan_result.trajectory
-        node.require_runtime_ready(
-            args.wait_s, expected_input_source=trajectory.input_source
         )
         print(
             "prepared follow ready: "
@@ -175,15 +214,49 @@ def run(argv: list[str] | None = None) -> int:
             f"gate={Path(args.start_gate)}",
             flush=True,
         )
-        wait_for_start_gate(args.start_gate)
+        if args.refresh_gate is None:
+            wait_for_start_gate(args.start_gate)
+        else:
+            decision = wait_for_prepared_gate(
+                start_gate=args.start_gate,
+                refresh_gate=args.refresh_gate,
+            )
+            if decision == "refresh":
+                trajectory = _prepare_trajectory(
+                    node=node,
+                    profile=profile,
+                    mission=mission,
+                    phase=args.phase,
+                    wait_s=args.wait_s,
+                    target_id=target_id,
+                )
+                print(
+                    "prepared follow refreshed: "
+                    f"trajectory_id={trajectory.trajectory_id} "
+                    f"valid_until_s={trajectory.valid_until.sec + trajectory.valid_until.nanosec * 1e-9:.3f}",
+                    flush=True,
+                )
+                wait_for_start_gate(args.start_gate)
         runtime_now_s = node.get_clock().now().nanoseconds * 1e-9
         latest_bucket_tip = load_latest_live_bucket_tip(profile, now_s=runtime_now_s)
-        validate_prepared_follow_activation(
+        first_waypoint_distance_m = validate_prepared_follow_activation(
             snapshot=trajectory,
             runtime_now_s=runtime_now_s,
             latest_bucket_tip=latest_bucket_tip,
             allowed_first_waypoint_distance_m=args.first_waypoint_distance_m,
         )
+        if first_waypoint_distance_m is not None:
+            frozen_at_s = (
+                float(trajectory.inputs_frozen_at.sec)
+                + float(trajectory.inputs_frozen_at.nanosec) * 1e-9
+            )
+            print(
+                "prepared follow activation validated: "
+                f"trajectory_id={trajectory.trajectory_id} "
+                f"first_waypoint_distance_m={first_waypoint_distance_m:.4f} "
+                f"frozen_input_age_ms={(runtime_now_s - frozen_at_s) * 1000.0:.1f}",
+                flush=True,
+            )
         follow_result = node.follow_trajectory(trajectory, wait_s=args.wait_s)
         print(
             "Prepared→Follow live complete: "
@@ -207,6 +280,30 @@ def run(argv: list[str] | None = None) -> int:
             node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+
+def _prepare_trajectory(
+    *, node, profile, mission, phase: str, wait_s: float, target_id: str | None
+):
+    planning_started_s = time.monotonic()
+    print("waiting for fresh live planning inputs", flush=True)
+    wait_for_live_planning_inputs(profile, timeout_s=wait_s)
+    trajectory = node.plan_phase(
+        mission=mission,
+        phase=phase,
+        wait_s=wait_s,
+        target_id=target_id,
+    ).trajectory
+    node.require_runtime_ready(
+        wait_s, expected_input_source=trajectory.input_source
+    )
+    print(
+        "prepared plan complete: "
+        f"trajectory_id={trajectory.trajectory_id} "
+        f"planning_ms={(time.monotonic() - planning_started_s) * 1000.0:.1f}",
+        flush=True,
+    )
+    return trajectory
 
 
 def main() -> None:

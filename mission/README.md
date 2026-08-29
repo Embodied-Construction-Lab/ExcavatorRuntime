@@ -5,10 +5,9 @@
 
 当前现场配置使用 `rviz_adjusted`，供唯一真机入口 `live_commissioning` 使用。
 
-`config/excavation_demo.json` 是多点演示入口。它保存有序 `dig_points` 和一个公共
-`dump_target`，PC 依次为每个挖掘点提交一个完整
-`Follow DIG → ExecuteDig → Follow DUMP → ExecuteDump` 循环。文件在 Operator 启动时加载，
-修改后必须重启 Operator；点位配置不需要同步到 Orin。
+`config/excavation_dig_point_catalog.v1.json` 是 V3-B 固定挖掘点的唯一入口。它保存非空
+有序点位和点集；点数、点名与分组都不写死在代码中。Operator/RViz 与 WebUI/固定闭环读取
+同一文件，不再维护旧三点候选表。
 
 ## RViz 中调整坐标
 
@@ -16,10 +15,12 @@
 cd /home/zhaoshuai/workspace_uinty/RL_prj/AiryLidar
 source /opt/ros/jazzy/setup.bash
 source ros2_ws/install/setup.bash
-/usr/bin/python3 mission/apps/publish_mission_markers.py
+/usr/bin/python3 mission/apps/publish_mission_markers.py \
+  --dig-point-catalog mission/config/excavation_dig_point_catalog.v1.json
 ```
 
-保存 JSON 后，`/mission/target_markers` 会更新：橙色为 dig，紫色为 dump。
+保存 JSON 后，`/mission/target_markers` 会更新：橙色为近端 dig、蓝色为远端 dig、紫色为 dump。
+默认 RViz 配置已启用 `Mission Targets`，会显示目录中的全部带 ID 候选点。
 
 ## 纯离线 replay
 

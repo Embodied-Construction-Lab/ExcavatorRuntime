@@ -13,6 +13,7 @@ import numpy as np
 try:
     import rclpy
     from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from visualization_msgs.msg import Marker, MarkerArray
 except ModuleNotFoundError as exc:
     raise SystemExit(
@@ -67,11 +68,26 @@ class MarkerCaptureNode(Node):
     def __init__(self, topic: str) -> None:
         super().__init__("airy_octomap_marker_exporter")
         self.message: MarkerArray | None = None
-        self.subscription = self.create_subscription(MarkerArray, topic, self.on_message, 10)
+        self.subscription = self.create_subscription(
+            MarkerArray,
+            topic,
+            self.on_message,
+            marker_capture_qos(),
+        )
 
     def on_message(self, message: MarkerArray) -> None:
         """收到第一帧MarkerArray后保存，主循环会退出。"""
         self.message = message
+
+
+def marker_capture_qos() -> QoSProfile:
+    """Match octomap_server's latched MarkerArray publisher."""
+
+    return QoSProfile(
+        depth=1,
+        reliability=ReliabilityPolicy.RELIABLE,
+        durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    )
 
 
 def main() -> int:

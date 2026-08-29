@@ -8,9 +8,9 @@ AIRY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(AIRY_ROOT))
 
 from mission.contract import load_mission
-from mission.demo import load_demo_program
+from mission.dig_point_catalog import load_dig_point_catalog
 from mission.markers import (
-    build_demo_marker_specs,
+    build_catalog_marker_specs,
     build_mission_marker_specs,
     MissionMarkerStyleError,
     load_mission_marker_style,
@@ -53,20 +53,28 @@ class MissionMarkersTest(unittest.TestCase):
             with self.assertRaises(MissionMarkerStyleError):
                 load_mission_marker_style(path)
 
-    def test_builds_all_demo_dig_points_and_one_common_dump_marker(self):
-        program = load_demo_program(
-            AIRY_ROOT / "mission" / "config" / "excavation_demo.json"
+    def test_builds_all_authoritative_catalog_points_without_legacy_ids(self):
+        catalog = load_dig_point_catalog(
+            AIRY_ROOT
+            / "mission"
+            / "config"
+            / "excavation_dig_point_catalog.v1.json"
+        )
+        mission = load_mission(
+            AIRY_ROOT / "mission" / "config" / "excavation_cycle.json"
         )
         style = load_mission_marker_style(MARKER_STYLE)
 
-        specs = build_demo_marker_specs(program, style)
+        specs = build_catalog_marker_specs(catalog, mission, style)
 
         self.assertEqual(
-            [spec.phase for spec in specs],
-            [f"dig:{point.point_id}" for point in program.dig_points] + ["dump"],
+            [spec.phase for spec in specs[:-1]],
+            [f"dig:{point_id}" for point_id in catalog.points],
         )
-        self.assertIn(program.dig_points[0].point_id, specs[0].label)
-        self.assertEqual(specs[-1].position_m, program.dump_target.position_m)
+        self.assertEqual(len(specs[:-1]), len(catalog.points))
+        self.assertNotIn("dig:dig_01", [spec.phase for spec in specs])
+        self.assertEqual(specs[-1].phase, "dump")
+        self.assertEqual(specs[-1].position_m, mission.targets["dump"].position_m)
 
 
 if __name__ == "__main__":

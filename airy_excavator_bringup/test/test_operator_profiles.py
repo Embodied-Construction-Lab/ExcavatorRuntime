@@ -108,7 +108,9 @@ def test_source_root_resolution_works_from_a_regular_install_prefix(tmp_path):
     ).touch()
     for relative in (
         "localmap/config/planning.json",
+        "localmap/apps/visualization/publish_trajectory_markers.py",
         "mission/config/excavation_cycle.json",
+        "mission/config/excavation_dig_point_catalog.v1.json",
         "mission/config/excavation_demo.json",
         "kinematics/waji_description/urdf/waji.urdf",
     ):

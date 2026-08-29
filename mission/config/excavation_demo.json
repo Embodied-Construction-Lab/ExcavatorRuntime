@@ -5,20 +5,32 @@
   "target_status": "rviz_adjusted",
   "dig_points": [
     {
-      "point_id": "dig_01",
-      "position_m": [1.0, 0.26, 0.0],
+      "point_id": "dig_near_01",
+      "position_m": [1.1, 0.55, 0.0],
       "normal": [0.0, 0.0, 1.0],
       "radius_m": 0.25
     },
     {
-      "point_id": "dig_02",
-      "position_m": [1.0, 0.0, 0.0],
+      "point_id": "dig_near_02",
+      "position_m": [1.1, 0.25, 0.0],
       "normal": [0.0, 0.0, 1.0],
       "radius_m": 0.25
     },
     {
-      "point_id": "dig_03",
-      "position_m": [1.0, -0.26, 0.0],
+      "point_id": "dig_near_03",
+      "position_m": [1.1, -0.05, 0.0],
+      "normal": [0.0, 0.0, 1.0],
+      "radius_m": 0.25
+    },
+    {
+      "point_id": "dig_near_04",
+      "position_m": [1.1, -0.35, 0.0],
+      "normal": [0.0, 0.0, 1.0],
+      "radius_m": 0.25
+    },
+    {
+      "point_id": "dig_near_05",
+      "position_m": [1.1, -0.60, 0.2],
       "normal": [0.0, 0.0, 1.0],
       "radius_m": 0.25
     }
