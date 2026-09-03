@@ -176,6 +176,7 @@ def _live_adapter_processes(
     orin_host,
     orin_port,
     v3a_trajectory_path: str,
+    external_state_bridge: bool,
 ):
     state_bridge = airy_root / "runtime_bridge" / "apps" / "pc_runtime_bridge.py"
     perception = airy_root / "localmap" / "apps" / "perception" / "run_perception_stack.sh"
@@ -183,7 +184,7 @@ def _live_adapter_processes(
     if missing:
         raise RuntimeError(f"live shadow adapter is missing: {', '.join(missing)}")
     entities = []
-    if profile.start_live_state_bridge:
+    if profile.start_live_state_bridge and not external_state_bridge:
         state_bridge_process = ExecuteProcess(
             cmd=[
                 "/usr/bin/python3",
@@ -304,6 +305,14 @@ def _launch_profile(context):
     v3a_trajectory_path = LaunchConfiguration("v3a_trajectory_path").perform(
         context
     )
+    external_state_bridge_value = LaunchConfiguration(
+        "external_state_bridge"
+    ).perform(context)
+    if external_state_bridge_value not in {"true", "false"}:
+        raise RuntimeError("external_state_bridge must be true or false")
+    external_state_bridge = external_state_bridge_value == "true"
+    if external_state_bridge and not profile.start_live_state_bridge:
+        raise RuntimeError("external_state_bridge requires a live operator profile")
     motion_profile = profile.start_orin_edge_gateway
     if motion_profile and authorization != "ALLOW_LIVE_MACHINE_MOTION":
         raise RuntimeError(
@@ -352,6 +361,7 @@ def _launch_profile(context):
                 LaunchConfiguration("orin_host"),
                 LaunchConfiguration("orin_port"),
                 v3a_trajectory_path,
+                external_state_bridge,
             )
         )
 
@@ -459,6 +469,14 @@ def generate_launch_description():
                 "start_rviz",
                 default_value="true",
                 description="Start the single operator RViz window.",
+            ),
+            DeclareLaunchArgument(
+                "external_state_bridge",
+                default_value="false",
+                description=(
+                    "Reuse an already-running PC machine-state bridge instead of "
+                    "binding the state UDP endpoint again."
+                ),
             ),
             DeclareLaunchArgument(
                 "orin_host",

@@ -1,5 +1,8 @@
+import os
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest import mock
 
 from runtime_bridge.apps.inspect_orin_packets import extract_machine_state_packets, format_machine_state_packet
 from runtime_bridge.apps.mock_orin_relay import build_arg_parser as build_mock_orin_parser
@@ -7,6 +10,7 @@ from runtime_bridge.apps.pc_runtime_bridge import (
     JointStatePublisher,
     build_arg_parser,
     should_print_state,
+    write_latest_state,
 )
 from runtime_bridge.ros_provenance import epoch_ms_to_ros_time_fields
 from runtime_bridge.runtime_config import load_runtime_config
@@ -16,6 +20,26 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class RuntimeAppsTest(unittest.TestCase):
+    def test_latest_state_snapshot_is_published_with_atomic_replace(self):
+        class FakeState:
+            def to_dict(self):
+                return {"type": "machine_state_v1", "seq": 7}
+
+        with self.subTest("atomic snapshot"), mock.patch(
+            "runtime_bridge.apps.pc_runtime_bridge.os.replace",
+            wraps=os.replace,
+        ) as replace:
+            with TemporaryDirectory() as directory:
+                path = Path(directory) / "latest_state.json"
+                write_latest_state(path, FakeState())
+
+                self.assertEqual(
+                    path.read_text(encoding="utf-8"),
+                    '{\n  "type": "machine_state_v1",\n  "seq": 7\n}\n',
+                )
+                self.assertEqual(replace.call_count, 1)
+                self.assertEqual(replace.call_args.args[1], path)
+
     def test_joint_state_publisher_close_is_idempotent_after_ros_signal_shutdown(self):
         class FakeNode:
             destroyed = False
@@ -39,9 +63,12 @@ class RuntimeAppsTest(unittest.TestCase):
         self.assertTrue(publisher.node.destroyed)
 
     def test_diagnostic_bridge_accepts_packet_print_interval_override(self):
-        args = build_arg_parser().parse_args(["--print-every", "100"])
+        args = build_arg_parser().parse_args(
+            ["--print-every", "100", "--write-every", "1"]
+        )
 
         self.assertEqual(args.print_every, 100)
+        self.assertEqual(args.write_every, 1)
 
     def test_diagnostic_bridge_allows_zero_but_rejects_negative_print_interval(self):
         parser = build_arg_parser()
@@ -62,9 +89,10 @@ class RuntimeAppsTest(unittest.TestCase):
 
         self.assertEqual(
             set(vars(defaults)),
-            {"config", "publish_joint_states", "print_every"},
+            {"config", "publish_joint_states", "print_every", "write_every"},
         )
         self.assertIsNone(defaults.print_every)
+        self.assertIsNone(defaults.write_every)
 
     def test_mock_orin_relay_is_state_only(self):
         defaults = build_mock_orin_parser().parse_args([])

@@ -122,6 +122,14 @@ def test_live_input_adapter_exit_shuts_down_the_whole_operator_stack():
     ) in text
 
 
+def test_operator_can_reuse_the_webui_owned_machine_state_bridge():
+    text = launch_text()
+
+    assert 'DeclareLaunchArgument(\n                "external_state_bridge"' in text
+    assert '"external_state_bridge"\n    ).perform(context)' in text
+    assert "if profile.start_live_state_bridge and not external_state_bridge:" in text
+
+
 def test_live_shadow_can_publish_orin_authoritative_v3a_trajectory():
     text = launch_text()
 

@@ -1,0 +1,17 @@
+{
+  "schema_version": "tadps_benchmark_config.v1",
+  "expected_frame_id": "world",
+  "minimum_candidate_score": 0.45,
+  "minimum_stable_frames": 3,
+  "maximum_target_jump_m": 0.30,
+  "maximum_candidate_dropout_frames": 10,
+  "switch_score_margin": 0.10,
+  "switch_distance_m": 0.10,
+  "score_weights": {
+    "local_soil_height": 0.35,
+    "confidence": 0.25,
+    "edge_clearance": 0.20,
+    "relative_height": 0.10,
+    "roughness_penalty": -0.10
+  }
+}

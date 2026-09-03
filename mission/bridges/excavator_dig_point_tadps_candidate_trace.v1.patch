@@ -1,0 +1,659 @@
+diff --git a/excavator_dig_point/CMakeLists.txt b/excavator_dig_point/CMakeLists.txt
+index 0fe8b4a..b5c8520 100644
+--- a/excavator_dig_point/CMakeLists.txt
++++ b/excavator_dig_point/CMakeLists.txt
+@@ -17,0 +18 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc)
++find_package(OpenSSL REQUIRED)
+@@ -30 +31 @@ target_compile_features(excavator_dig_point_node PUBLIC cxx_std_17)
+-target_include_directories(excavator_dig_point_node PRIVATE ${OpenCV_INCLUDE_DIRS})
++target_include_directories(excavator_dig_point_node PRIVATE include ${OpenCV_INCLUDE_DIRS})
+@@ -40 +41 @@ ament_target_dependencies(excavator_dig_point_node
+-target_link_libraries(excavator_dig_point_node ${OpenCV_LIBS})
++target_link_libraries(excavator_dig_point_node ${OpenCV_LIBS} OpenSSL::Crypto)
+@@ -49,0 +51,4 @@ install(TARGETS excavator_dig_point_node
++install(DIRECTORY include/
++  DESTINATION include
++)
++
+@@ -59,0 +65,9 @@ install(FILES GRID_MAP_ENTRY_POINT_RULES.zh.md
++if(BUILD_TESTING)
++  find_package(ament_cmake_gtest REQUIRED)
++  ament_add_gtest(test_tadps_candidate_trace test/test_tadps_candidate_trace.cpp)
++  target_compile_features(test_tadps_candidate_trace PUBLIC cxx_std_17)
++  target_include_directories(test_tadps_candidate_trace PRIVATE include)
++  ament_target_dependencies(test_tadps_candidate_trace grid_map_msgs rclcpp std_msgs)
++  target_link_libraries(test_tadps_candidate_trace OpenSSL::Crypto)
++endif()
++
+diff --git a/excavator_dig_point/config/dig_point.yaml b/excavator_dig_point/config/dig_point.yaml
+index a58f01f..708464c 100644
+--- a/excavator_dig_point/config/dig_point.yaml
++++ b/excavator_dig_point/config/dig_point.yaml
+@@ -10,0 +11,7 @@ excavator_dig_point:
++    # Offline TADPS evidence only.  The selector's normal behavior is unchanged
++    # unless a run explicitly enables this publisher and supplies a sequence id.
++    candidate_trace_enabled: false
++    candidate_trace_topic: /digging/tadps_candidate_frame
++    candidate_trace_sequence_id: ""
++    candidate_trace_queue_depth: 4
++
+diff --git a/excavator_dig_point/launch/dig_point.launch.py b/excavator_dig_point/launch/dig_point.launch.py
+index bc461d4..3b8921d 100644
+--- a/excavator_dig_point/launch/dig_point.launch.py
++++ b/excavator_dig_point/launch/dig_point.launch.py
+@@ -8,0 +9 @@ from launch_ros.actions import Node
++from launch_ros.parameter_descriptions import ParameterValue
+@@ -18,0 +20,3 @@ def generate_launch_description():
++    candidate_trace_enabled = LaunchConfiguration("candidate_trace_enabled")
++    candidate_trace_topic = LaunchConfiguration("candidate_trace_topic")
++    candidate_trace_sequence_id = LaunchConfiguration("candidate_trace_sequence_id")
+@@ -24,0 +29,6 @@ def generate_launch_description():
++            DeclareLaunchArgument("candidate_trace_enabled", default_value="false"),
++            DeclareLaunchArgument(
++                "candidate_trace_topic",
++                default_value="/digging/tadps_candidate_frame",
++            ),
++            DeclareLaunchArgument("candidate_trace_sequence_id", default_value=""),
+@@ -32 +42,12 @@ def generate_launch_description():
+-                    {"input_topic": input_topic},
++                    {
++                        "input_topic": input_topic,
++                        "candidate_trace_enabled": ParameterValue(
++                            candidate_trace_enabled, value_type=bool
++                        ),
++                        "candidate_trace_topic": ParameterValue(
++                            candidate_trace_topic, value_type=str
++                        ),
++                        "candidate_trace_sequence_id": ParameterValue(
++                            candidate_trace_sequence_id, value_type=str
++                        ),
++                    },
+diff --git a/excavator_dig_point/launch/full_pipeline.launch.py b/excavator_dig_point/launch/full_pipeline.launch.py
+index 513c160..40783f4 100644
+--- a/excavator_dig_point/launch/full_pipeline.launch.py
++++ b/excavator_dig_point/launch/full_pipeline.launch.py
+@@ -9,0 +10 @@ from launch_ros.actions import Node
++from launch_ros.parameter_descriptions import ParameterValue
+@@ -22,0 +24,3 @@ def generate_launch_description():
++    candidate_trace_enabled = LaunchConfiguration("candidate_trace_enabled")
++    candidate_trace_topic = LaunchConfiguration("candidate_trace_topic")
++    candidate_trace_sequence_id = LaunchConfiguration("candidate_trace_sequence_id")
+@@ -33,0 +38,6 @@ def generate_launch_description():
++            DeclareLaunchArgument("candidate_trace_enabled", default_value="false"),
++            DeclareLaunchArgument(
++                "candidate_trace_topic",
++                default_value="/digging/tadps_candidate_frame",
++            ),
++            DeclareLaunchArgument("candidate_trace_sequence_id", default_value=""),
+@@ -59 +69,14 @@ def generate_launch_description():
+-                parameters=[str(dig_point_share / "config" / "dig_point.yaml")],
++                parameters=[
++                    str(dig_point_share / "config" / "dig_point.yaml"),
++                    {
++                        "candidate_trace_enabled": ParameterValue(
++                            candidate_trace_enabled, value_type=bool
++                        ),
++                        "candidate_trace_topic": ParameterValue(
++                            candidate_trace_topic, value_type=str
++                        ),
++                        "candidate_trace_sequence_id": ParameterValue(
++                            candidate_trace_sequence_id, value_type=str
++                        ),
++                    },
++                ],
+diff --git a/excavator_dig_point/package.xml b/excavator_dig_point/package.xml
+index 104da4f..6b02a7a 100644
+--- a/excavator_dig_point/package.xml
++++ b/excavator_dig_point/package.xml
+@@ -14,0 +15 @@
++  <depend>openssl</depend>
+@@ -28,0 +30,2 @@
++  <test_depend>ament_cmake_gtest</test_depend>
++
+diff --git a/excavator_dig_point/src/dig_point_node.cpp b/excavator_dig_point/src/dig_point_node.cpp
+index f681d22..453f197 100644
+--- a/excavator_dig_point/src/dig_point_node.cpp
++++ b/excavator_dig_point/src/dig_point_node.cpp
+@@ -1,0 +2 @@
++#include "excavator_dig_point/tadps_candidate_trace_publisher.hpp"
+@@ -82,0 +84,5 @@ struct Candidate
++  float local_soil_height_score{0.0F};
++  float confidence_score{0.0F};
++  float edge_clearance_score{0.0F};
++  float relative_height_score{0.0F};
++  float roughness_penalty{0.0F};
+@@ -112,0 +119,6 @@ public:
++    candidate_trace_enabled_ = declare_parameter<bool>("candidate_trace_enabled", false);
++    candidate_trace_topic_ = declare_parameter<std::string>(
++      "candidate_trace_topic", "/digging/tadps_candidate_frame");
++    candidate_trace_sequence_id_ = declare_parameter<std::string>(
++      "candidate_trace_sequence_id", "");
++    candidate_trace_queue_depth_ = declare_parameter<int>("candidate_trace_queue_depth", 4);
+@@ -161,0 +174,8 @@ public:
++    if (candidate_trace_enabled_) {
++      candidate_trace_publisher_ = std::make_unique<TadpsCandidateTracePublisher>(
++        *this, candidate_trace_topic_, candidate_trace_sequence_id_,
++        static_cast<std::size_t>(candidate_trace_queue_depth_));
++      RCLCPP_INFO(
++        get_logger(), "TADPS complete candidate trace enabled: topic=%s sequence=%s",
++        candidate_trace_topic_.c_str(), candidate_trace_sequence_id_.c_str());
++    }
+@@ -186 +206,4 @@ private:
+-      maximum_candidate_markers_ < 1)
++      maximum_candidate_markers_ < 1 || candidate_trace_queue_depth_ < 1 ||
++      candidate_trace_queue_depth_ > 1024 ||
++      (candidate_trace_enabled_ &&
++      (candidate_trace_topic_.empty() || candidate_trace_sequence_id_.empty())))
+@@ -698,0 +722,5 @@ private:
++        candidate.local_soil_height_score = local_soil_score;
++        candidate.confidence_score = confidence_score;
++        candidate.edge_clearance_score = edge_score;
++        candidate.relative_height_score = relative_score;
++        candidate.roughness_penalty = roughness_penalty;
+@@ -1066,0 +1095,44 @@ private:
++  void publishCandidateTrace(
++    const grid_map_msgs::msg::GridMap::ConstSharedPtr & message,
++    const std::vector<Candidate> & candidates)
++  {
++    if (!candidate_trace_publisher_) {
++      return;
++    }
++    try {
++      std::vector<TadpsCandidateTraceEvidence> evidence;
++      evidence.reserve(candidates.size());
++      for (const auto & candidate : candidates) {
++        TadpsCandidateTraceEvidence item;
++        item.candidate_id = "pile-" + std::to_string(candidate.pile_id) +
++          "-cell-" + std::to_string(candidate.row) + "-" +
++          std::to_string(candidate.column);
++        item.position_m = {candidate.point.x, candidate.point.y, candidate.point.z};
++        item.terrain_valid = true;
++        item.surface_height_m = candidate.point.z;
++        item.local_soil_height_score = candidate.local_soil_height_score;
++        item.confidence_score = candidate.confidence_score;
++        item.edge_clearance_score = candidate.edge_clearance_score;
++        item.relative_height_score = candidate.relative_height_score;
++        item.roughness_penalty = candidate.roughness_penalty;
++        evidence.push_back(std::move(item));
++      }
++      if (!candidate_trace_publisher_->enqueue(
++          message, frame_sequence_ - 1U, std::move(evidence)))
++      {
++        RCLCPP_WARN_THROTTLE(
++          get_logger(), *get_clock(), 3000,
++          "TADPS candidate trace queue full; frame skipped and capture must be rejected");
++      }
++    } catch (const std::exception & error) {
++      RCLCPP_WARN_THROTTLE(
++        get_logger(), *get_clock(), 3000,
++        "TADPS candidate trace enqueue failed without affecting selection: %s",
++        error.what());
++    } catch (...) {
++      RCLCPP_WARN_THROTTLE(
++        get_logger(), *get_clock(), 3000,
++        "TADPS candidate trace enqueue failed without affecting selection");
++    }
++  }
++
+@@ -1097,0 +1170 @@ private:
++      publishCandidateTrace(message, no_candidates);
+@@ -1120,0 +1194 @@ private:
++    publishCandidateTrace(message, candidates);
+@@ -1141,0 +1216,4 @@ private:
++  bool candidate_trace_enabled_{false};
++  std::string candidate_trace_topic_;
++  std::string candidate_trace_sequence_id_;
++  int candidate_trace_queue_depth_{4};
+@@ -1183,0 +1262 @@ private:
++  std::unique_ptr<TadpsCandidateTracePublisher> candidate_trace_publisher_;
+diff --git a/excavator_dig_point/include/excavator_dig_point/tadps_candidate_trace.hpp b/excavator_dig_point/include/excavator_dig_point/tadps_candidate_trace.hpp
+new file mode 100644
+index 0000000..de98daa
+--- /dev/null
++++ b/excavator_dig_point/include/excavator_dig_point/tadps_candidate_trace.hpp
+@@ -0,0 +1,167 @@
++#ifndef EXCAVATOR_DIG_POINT__TADPS_CANDIDATE_TRACE_HPP_
++#define EXCAVATOR_DIG_POINT__TADPS_CANDIDATE_TRACE_HPP_
++
++#include <array>
++#include <openssl/sha.h>
++#include <cmath>
++#include <cstdint>
++#include <iomanip>
++#include <sstream>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++namespace excavator_dig_point
++{
++
++struct TadpsCandidateTraceEvidence
++{
++  std::string candidate_id;
++  std::array<double, 3> position_m{0.0, 0.0, 0.0};
++  bool terrain_valid{true};
++  double surface_height_m{0.0};
++  double local_soil_height_score{0.0};
++  double confidence_score{0.0};
++  double edge_clearance_score{0.0};
++  double relative_height_score{0.0};
++  double roughness_penalty{0.0};
++};
++
++inline std::string escapeTadpsJsonString(const std::string & value)
++{
++  std::ostringstream output;
++  output << std::hex << std::setfill('0');
++  for (const unsigned char character : value) {
++    switch (character) {
++      case '"': output << "\\\""; break;
++      case '\\': output << "\\\\"; break;
++      case '\b': output << "\\b"; break;
++      case '\f': output << "\\f"; break;
++      case '\n': output << "\\n"; break;
++      case '\r': output << "\\r"; break;
++      case '\t': output << "\\t"; break;
++      default:
++        if (character < 0x20U) {
++          output << "\\u" << std::setw(4) << static_cast<unsigned int>(character);
++        } else {
++          output << static_cast<char>(character);
++        }
++    }
++  }
++  return output.str();
++}
++
++inline void validateTadpsNumber(double value, const char * field)
++{
++  if (!std::isfinite(value)) {
++    throw std::invalid_argument(std::string(field) + " must be finite");
++  }
++}
++
++inline void validateTadpsNormalized(double value, const char * field)
++{
++  validateTadpsNumber(value, field);
++  if (value < 0.0 || value > 1.0) {
++    throw std::invalid_argument(std::string(field) + " must be in [0, 1]");
++  }
++}
++
++inline bool isLowercaseSha256(const std::string & value)
++{
++  if (value.size() != 64U) {
++    return false;
++  }
++  for (const char character : value) {
++    if (!((character >= '0' && character <= '9') ||
++      (character >= 'a' && character <= 'f')))
++    {
++      return false;
++    }
++  }
++  return true;
++}
++
++inline std::string sha256Hex(const std::uint8_t * data, std::size_t size)
++{
++  if (data == nullptr && size != 0U) {
++    throw std::invalid_argument("SHA-256 input pointer is null");
++  }
++  std::array<unsigned char, SHA256_DIGEST_LENGTH> digest{};
++  if (SHA256(data, size, digest.data()) == nullptr) {
++    throw std::runtime_error("SHA-256 calculation failed");
++  }
++  std::ostringstream output;
++  output << std::hex << std::setfill('0');
++  for (const unsigned char byte : digest) {
++    output << std::setw(2) << static_cast<unsigned int>(byte);
++  }
++  return output.str();
++}
++
++inline std::string buildTadpsCandidateFrameJson(
++  const std::string & sequence_id,
++  const std::string & frame_id,
++  std::uint64_t frame_index,
++  double stamp_s,
++  const std::string & map_sha256,
++  const std::vector<TadpsCandidateTraceEvidence> & candidates)
++{
++  if (sequence_id.empty() || frame_id.empty()) {
++    throw std::invalid_argument("sequence_id and frame_id must be non-empty");
++  }
++  validateTadpsNumber(stamp_s, "stamp_s");
++  if (stamp_s < 0.0) {
++    throw std::invalid_argument("stamp_s must be non-negative");
++  }
++  if (!isLowercaseSha256(map_sha256)) {
++    throw std::invalid_argument("map_sha256 must be a lowercase SHA-256 digest");
++  }
++
++  std::ostringstream output;
++  output << std::setprecision(17);
++  output << "{\"schema_version\":\"tadps_selector_candidate_frame.v1\"";
++  output << ",\"record_type\":\"complete_preselection_candidate_set\"";
++  output << ",\"sequence_id\":\"" << escapeTadpsJsonString(sequence_id) << "\"";
++  output << ",\"frame_id\":\"" << escapeTadpsJsonString(frame_id) << "\"";
++  output << ",\"frame_index\":" << frame_index;
++  output << ",\"stamp_s\":" << stamp_s;
++  output << ",\"map_sha256\":\"" << map_sha256 << "\"";
++  output << ",\"candidate_set_complete\":true,\"candidates\":[";
++  for (std::size_t index = 0; index < candidates.size(); ++index) {
++    const auto & candidate = candidates[index];
++    if (candidate.candidate_id.empty()) {
++      throw std::invalid_argument("candidate_id must be non-empty");
++    }
++    for (const double coordinate : candidate.position_m) {
++      validateTadpsNumber(coordinate, "position_m");
++    }
++    validateTadpsNumber(candidate.surface_height_m, "surface_height_m");
++    validateTadpsNormalized(
++      candidate.local_soil_height_score, "local_soil_height_score");
++    validateTadpsNormalized(candidate.confidence_score, "confidence_score");
++    validateTadpsNormalized(candidate.edge_clearance_score, "edge_clearance_score");
++    validateTadpsNormalized(candidate.relative_height_score, "relative_height_score");
++    validateTadpsNormalized(candidate.roughness_penalty, "roughness_penalty");
++    if (index != 0U) {
++      output << ',';
++    }
++    output << "{\"candidate_id\":\"" << escapeTadpsJsonString(candidate.candidate_id)
++           << "\",\"position_m\":[" << candidate.position_m[0] << ','
++           << candidate.position_m[1] << ',' << candidate.position_m[2]
++           << "],\"features\":{";
++    output << "\"terrain_valid\":" << (candidate.terrain_valid ? "true" : "false");
++    output << ",\"surface_height_m\":" << candidate.surface_height_m;
++    output << ",\"local_soil_height_score\":" << candidate.local_soil_height_score;
++    output << ",\"confidence_score\":" << candidate.confidence_score;
++    output << ",\"edge_clearance_score\":" << candidate.edge_clearance_score;
++    output << ",\"relative_height_score\":" << candidate.relative_height_score;
++    output << ",\"roughness_penalty\":" << candidate.roughness_penalty;
++    output << "},\"downstream_planner_accepted\":null}";
++  }
++  output << "]}";
++  return output.str();
++}
++
++}  // namespace excavator_dig_point
++
++#endif  // EXCAVATOR_DIG_POINT__TADPS_CANDIDATE_TRACE_HPP_
+diff --git a/excavator_dig_point/include/excavator_dig_point/tadps_candidate_trace_publisher.hpp b/excavator_dig_point/include/excavator_dig_point/tadps_candidate_trace_publisher.hpp
+new file mode 100644
+index 0000000..90066c5
+--- /dev/null
++++ b/excavator_dig_point/include/excavator_dig_point/tadps_candidate_trace_publisher.hpp
+@@ -0,0 +1,167 @@
++#ifndef EXCAVATOR_DIG_POINT__TADPS_CANDIDATE_TRACE_PUBLISHER_HPP_
++#define EXCAVATOR_DIG_POINT__TADPS_CANDIDATE_TRACE_PUBLISHER_HPP_
++
++#include "excavator_dig_point/tadps_candidate_trace.hpp"
++
++#include <grid_map_msgs/msg/grid_map.hpp>
++#include <rclcpp/rclcpp.hpp>
++#include <rclcpp/serialization.hpp>
++#include <rclcpp/serialized_message.hpp>
++#include <std_msgs/msg/string.hpp>
++
++#include <atomic>
++#include <condition_variable>
++#include <cstddef>
++#include <cstdint>
++#include <deque>
++#include <memory>
++#include <mutex>
++#include <stdexcept>
++#include <string>
++#include <thread>
++#include <utility>
++#include <vector>
++
++namespace excavator_dig_point
++{
++
++inline std::string serializedGridMapSha256(
++  const grid_map_msgs::msg::GridMap & message)
++{
++  rclcpp::Serialization<grid_map_msgs::msg::GridMap> serializer;
++  rclcpp::SerializedMessage serialized;
++  serializer.serialize_message(&message, &serialized);
++  const auto & raw = serialized.get_rcl_serialized_message();
++  return sha256Hex(raw.buffer, raw.buffer_length);
++}
++
++class TadpsCandidateTracePublisher
++{
++public:
++  TadpsCandidateTracePublisher(
++    rclcpp::Node & node,
++    std::string topic,
++    std::string sequence_id,
++    std::size_t maximum_pending_frames)
++  : logger_(node.get_logger()),
++    sequence_id_(std::move(sequence_id)),
++    maximum_pending_frames_(maximum_pending_frames)
++  {
++    if (topic.empty() || sequence_id_.empty()) {
++      throw std::invalid_argument("candidate trace topic and sequence_id must be non-empty");
++    }
++    if (maximum_pending_frames_ < 1U || maximum_pending_frames_ > 1024U) {
++      throw std::invalid_argument("candidate trace queue depth must be in [1, 1024]");
++    }
++    publisher_ = node.create_publisher<std_msgs::msg::String>(
++      topic, rclcpp::QoS(rclcpp::KeepLast(maximum_pending_frames_))
++      .reliable().durability_volatile());
++    worker_ = std::thread(&TadpsCandidateTracePublisher::run, this);
++  }
++
++  TadpsCandidateTracePublisher(const TadpsCandidateTracePublisher &) = delete;
++  TadpsCandidateTracePublisher & operator=(const TadpsCandidateTracePublisher &) = delete;
++
++  ~TadpsCandidateTracePublisher()
++  {
++    {
++      std::lock_guard<std::mutex> lock(mutex_);
++      stopping_ = true;
++    }
++    condition_.notify_one();
++    if (worker_.joinable()) {
++      worker_.join();
++    }
++  }
++
++  bool enqueue(
++    grid_map_msgs::msg::GridMap::ConstSharedPtr message,
++    std::uint64_t frame_index,
++    std::vector<TadpsCandidateTraceEvidence> candidates)
++  {
++    if (!message) {
++      return false;
++    }
++    PendingFrame frame{std::move(message), frame_index, std::move(candidates)};
++    {
++      std::lock_guard<std::mutex> lock(mutex_);
++      if (stopping_ || queue_.size() >= maximum_pending_frames_) {
++        dropped_frames_.fetch_add(1U, std::memory_order_relaxed);
++        return false;
++      }
++      queue_.push_back(std::move(frame));
++    }
++    condition_.notify_one();
++    return true;
++  }
++
++  std::uint64_t droppedFrames() const noexcept
++  {
++    return dropped_frames_.load(std::memory_order_relaxed);
++  }
++
++  std::uint64_t failedFrames() const noexcept
++  {
++    return failed_frames_.load(std::memory_order_relaxed);
++  }
++
++private:
++  struct PendingFrame
++  {
++    grid_map_msgs::msg::GridMap::ConstSharedPtr message;
++    std::uint64_t frame_index;
++    std::vector<TadpsCandidateTraceEvidence> candidates;
++  };
++
++  void run() noexcept
++  {
++    while (true) {
++      PendingFrame frame;
++      {
++        std::unique_lock<std::mutex> lock(mutex_);
++        condition_.wait(lock, [this]() {return stopping_ || !queue_.empty();});
++        if (queue_.empty()) {
++          if (stopping_) {
++            return;
++          }
++          continue;
++        }
++        frame = std::move(queue_.front());
++        queue_.pop_front();
++      }
++      try {
++        const auto & header = frame.message->header;
++        const double stamp_s = static_cast<double>(header.stamp.sec) +
++          static_cast<double>(header.stamp.nanosec) * 1.0e-9;
++        std_msgs::msg::String output;
++        output.data = buildTadpsCandidateFrameJson(
++          sequence_id_, header.frame_id, frame.frame_index, stamp_s,
++          serializedGridMapSha256(*frame.message), frame.candidates);
++        publisher_->publish(output);
++      } catch (const std::exception & error) {
++        failed_frames_.fetch_add(1U, std::memory_order_relaxed);
++        RCLCPP_WARN(
++          logger_, "TADPS candidate trace frame skipped: %s", error.what());
++      } catch (...) {
++        failed_frames_.fetch_add(1U, std::memory_order_relaxed);
++        RCLCPP_WARN(logger_, "TADPS candidate trace frame skipped: unknown error");
++      }
++    }
++  }
++
++  rclcpp::Logger logger_;
++  std::string sequence_id_;
++  std::size_t maximum_pending_frames_;
++  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
++  std::mutex mutex_;
++  std::condition_variable condition_;
++  std::deque<PendingFrame> queue_;
++  bool stopping_{false};
++  std::thread worker_;
++  std::atomic<std::uint64_t> dropped_frames_{0U};
++  std::atomic<std::uint64_t> failed_frames_{0U};
++};
++
++}  // namespace excavator_dig_point
++
++#endif  // EXCAVATOR_DIG_POINT__TADPS_CANDIDATE_TRACE_PUBLISHER_HPP_
+diff --git a/excavator_dig_point/test/test_tadps_candidate_trace.cpp b/excavator_dig_point/test/test_tadps_candidate_trace.cpp
+new file mode 100644
+index 0000000..40def7d
+--- /dev/null
++++ b/excavator_dig_point/test/test_tadps_candidate_trace.cpp
+@@ -0,0 +1,99 @@
++#include "excavator_dig_point/tadps_candidate_trace.hpp"
++#include "excavator_dig_point/tadps_candidate_trace_publisher.hpp"
++
++#include <gtest/gtest.h>
++
++#include <grid_map_msgs/msg/grid_map.hpp>
++#include <rclcpp/rclcpp.hpp>
++#include <std_msgs/msg/string.hpp>
++
++#include <chrono>
++#include <memory>
++#include <string>
++#include <thread>
++#include <vector>
++
++namespace excavator_dig_point
++{
++
++TEST(TadpsCandidateTrace, BuildsCompleteStrictCandidateFrame)
++{
++  TadpsCandidateTraceEvidence candidate;
++  candidate.candidate_id = "pile-7-cell-12-34";
++  candidate.position_m = {1.0, -0.2, 0.4};
++  candidate.terrain_valid = true;
++  candidate.surface_height_m = 0.4;
++  candidate.local_soil_height_score = 0.8;
++  candidate.confidence_score = 0.9;
++  candidate.edge_clearance_score = 0.7;
++  candidate.relative_height_score = 0.6;
++  candidate.roughness_penalty = 0.1;
++
++  const std::string payload = buildTadpsCandidateFrameJson(
++    "pile-stage-001", "world", 42U, 123.5,
++    std::string(64U, 'a'), std::vector<TadpsCandidateTraceEvidence>{candidate});
++
++  EXPECT_NE(payload.find("\"schema_version\":\"tadps_selector_candidate_frame.v1\""),
++    std::string::npos);
++  EXPECT_NE(payload.find("\"record_type\":\"complete_preselection_candidate_set\""),
++    std::string::npos);
++  EXPECT_NE(payload.find("\"candidate_set_complete\":true"), std::string::npos);
++  EXPECT_NE(payload.find("\"candidate_id\":\"pile-7-cell-12-34\""),
++    std::string::npos);
++  EXPECT_NE(payload.find("\"downstream_planner_accepted\":null"), std::string::npos);
++  EXPECT_NE(payload.find("\"frame_index\":42"), std::string::npos);
++}
++
++TEST(TadpsCandidateTrace, EscapesRunControlledJsonStrings)
++{
++  const std::string payload = buildTadpsCandidateFrameJson(
++    "pile\"stage\\001", "world\nframe", 0U, 1.0,
++    std::string(64U, 'b'), {});
++
++  EXPECT_NE(payload.find("pile\\\"stage\\\\001"), std::string::npos);
++  EXPECT_NE(payload.find("world\\nframe"), std::string::npos);
++}
++
++TEST(TadpsCandidateTrace, HashesSerializedGridMapBytesWithSha256)
++{
++  const std::string bytes = "abc";
++
++  EXPECT_EQ(
++    sha256Hex(reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size()),
++    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
++}
++
++TEST(TadpsCandidateTrace, PublishesSerializedMapBoundEvidenceFromWorker)
++{
++  rclcpp::init(0, nullptr);
++  auto producer = std::make_shared<rclcpp::Node>("tadps_trace_test_producer");
++  auto consumer = std::make_shared<rclcpp::Node>("tadps_trace_test_consumer");
++  std::string received;
++  auto subscription = consumer->create_subscription<std_msgs::msg::String>(
++    "/test/tadps_candidate_frame", rclcpp::QoS(8).reliable(),
++    [&received](std_msgs::msg::String::ConstSharedPtr message) {
++      received = message->data;
++    });
++  (void)subscription;
++  auto trace = std::make_unique<TadpsCandidateTracePublisher>(
++    *producer, "/test/tadps_candidate_frame", "pile-stage-001", 4U);
++  auto map = std::make_shared<grid_map_msgs::msg::GridMap>();
++  map->header.frame_id = "world";
++  map->header.stamp.sec = 123;
++  map->header.stamp.nanosec = 500000000U;
++
++  ASSERT_TRUE(trace->enqueue(map, 7U, {}));
++  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
++  while (received.empty() && std::chrono::steady_clock::now() < deadline) {
++    rclcpp::spin_some(consumer);
++    std::this_thread::sleep_for(std::chrono::milliseconds(5));
++  }
++  trace.reset();
++  rclcpp::shutdown();
++
++  EXPECT_NE(received.find("\"frame_index\":7"), std::string::npos);
++  EXPECT_NE(received.find("\"stamp_s\":123.5"), std::string::npos);
++  EXPECT_NE(received.find("\"map_sha256\":"), std::string::npos);
++}
++
++}  // namespace excavator_dig_point

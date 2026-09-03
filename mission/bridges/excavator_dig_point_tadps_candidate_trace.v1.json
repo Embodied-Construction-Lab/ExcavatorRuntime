@@ -1,0 +1,39 @@
+{
+  "schema_version": "tadps_selector_bridge_provenance.v1",
+  "bridge_id": "excavator_dig_point_tadps_candidate_trace.v1",
+  "package_name": "excavator_dig_point",
+  "patch_file": "excavator_dig_point_tadps_candidate_trace.v1.patch",
+  "patch_sha256": "a70057388856b242a6c2b229c5cde01ad6fde243756b15f5690fee409ba4e010",
+  "base_files": {
+    "CMakeLists.txt": "f6e9306783978c5cc017ac3f1f268a1a165bfa99d01ad4ad46b68a5acef10a2a",
+    "config/dig_point.yaml": "c33e1a488f6faba9901b5f822b8d6d745e9dafd1cc41b7d278cccbd3d4b1c03e",
+    "launch/dig_point.launch.py": "80a30e1a468a80fc0af44fd109f4dac568b78218f7312c9f68f4b16f06a5fcbf",
+    "launch/full_pipeline.launch.py": "5d1620f916f9bca474331eb0074fe5c243ea10939629ad574afb8d1221c1ad02",
+    "package.xml": "4d8e80766d059b0a69ef6fca04bd07ac398eed53b21499e482f660dafc8a4371",
+    "src/dig_point_node.cpp": "1109ae90191b398cccaa2d25af483d34c18b95f74ae92ed2fe3f6af85a40922b"
+  },
+  "patched_source_files": {
+    "CMakeLists.txt": "45f99b924478f04efa278be13d438816c2f7526fd630608dfd125111d6da5f21",
+    "include/excavator_dig_point/tadps_candidate_trace.hpp": "d57fcb110ebd6872e9d472609664c544ea70aa2dce3893648e97632d3b2e2638",
+    "include/excavator_dig_point/tadps_candidate_trace_publisher.hpp": "d42ba312a231326912cebfd745a4c10c875fb92ea5e226c56f24723ce9caa857",
+    "launch/dig_point.launch.py": "3b00d11d9b9a915f8ae7b57cf0a8c3621343843ba2ac9b20e3fd018ae3781cda",
+    "launch/full_pipeline.launch.py": "db0d69a4d6ae3eab87b024ad6d585077161a82f52e8d9aa7854005af5af8b53b",
+    "package.xml": "d67d39760523ac578cb0ed40d0285145aa3b222b93eb554463add097fc227965",
+    "src/dig_point_node.cpp": "643a34a100a86d66c13200fa3dda08d9a07809d31e5c6eb5a4521841ad1f3167",
+    "test/test_tadps_candidate_trace.cpp": "b91ff98fa15f799b141307a61451c724ef9e5b4fc03758d35a16a42ee7fbe715"
+  },
+  "patched_config_files": {
+    "config/dig_point.yaml": "bf28fd8246aadb9b20f97ab94728e02eefc8dc7f7e7d9477853547b0db7469e5"
+  },
+  "runtime_contract": {
+    "enabled_parameter": "candidate_trace_enabled",
+    "default_enabled": false,
+    "topic_parameter": "candidate_trace_topic",
+    "default_topic": "/digging/tadps_candidate_frame",
+    "sequence_id_parameter": "candidate_trace_sequence_id",
+    "message_type": "std_msgs/msg/String",
+    "payload_schema": "tadps_selector_candidate_frame.v1",
+    "record_type": "complete_preselection_candidate_set",
+    "motion_commands_emitted": 0
+  }
+}

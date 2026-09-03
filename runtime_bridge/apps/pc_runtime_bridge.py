@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -50,6 +52,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=non_negative_int,
         default=None,
         help="每N个有效状态包打印一次；0关闭打印，默认读取runtime配置",
+    )
+    parser.add_argument(
+        "--write-every",
+        type=non_negative_int,
+        default=None,
+        help="每N个有效状态包原子更新状态快照；0关闭，默认读取runtime配置",
     )
     return parser
 
@@ -105,7 +113,23 @@ class JointStatePublisher:
 def write_latest_state(path: Path, state: ExcavatorStatePacket | MachineStatePacket) -> None:
     """写出最近状态，方便 smoke check 或人工排查。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            json.dump(state.to_dict(), stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -122,6 +146,11 @@ def main() -> int:
     recv_sock.bind(config.network.state_endpoint)
     joint_state_publisher = JointStatePublisher() if args.publish_joint_states else None
     print_every = config.diagnostics.print_every if args.print_every is None else args.print_every
+    write_every = (
+        config.diagnostics.write_every
+        if args.write_every is None
+        else args.write_every
+    )
 
     state_count = 0
     print(
@@ -149,8 +178,8 @@ def main() -> int:
 
             state_count += 1
             if (
-                config.diagnostics.write_every > 0
-                and state_count % config.diagnostics.write_every == 0
+                write_every > 0
+                and state_count % write_every == 0
             ):
                 # 按照write_every间隔输出状态
                 write_latest_state(DEFAULT_LATEST_STATE, packet)
