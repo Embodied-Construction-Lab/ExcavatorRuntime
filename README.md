@@ -1,5 +1,11 @@
 # ExcavatorRuntime
 
+> [!WARNING]
+> 本 README 第 0 节保留的是早期 `192.168.0.*` PC 主控架构说明，仅用于历史追溯，
+> 不可作为当前现场启动手册。当前 V3-B/ICRA 实验分支以 Orin Resident Mission 为运动权威，
+> PC/Orin 直连地址为 `192.168.50.1/192.168.50.2`。请只按
+> [笔记/相关命令.md](笔记/相关命令.md) 中经过当前配置核对的入口操作；旧命令不得直接用于真机。
+
 ExcavatorRuntime 是缩比挖掘机真机侧的感知、局部地图、bucket-tip 规划实验工程。
 
 当前只做：
